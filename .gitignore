@@ -43,3 +43,7 @@ HISTORY_OLD_REPO.md
 # HBuilderX / 微信开发者工具本地生成（不在工程根的临时配置）
 /project.config.json
 /project.private.config.json
+# 开发者工具个人 IDE 配置（应只在本地）
+/uniapp/project.private.config.json
+# 编译产物（按需提交 dev 调试版本，但通常不入库）
+/uniapp/dist/

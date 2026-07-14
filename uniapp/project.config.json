@@ -31,5 +31,10 @@
   },
   "appid": "wx507aa102dc9eed90",
   "editorSetting": {},
-  "libVersion": "3.17.0"
+  "libVersion": "3.17.0",
+  "miniprogramRoot": "dist/dev/mp-weixin/",
+  "cloudfunctionRoot": "cloudfunctions/",
+  "projectname": "jiajitong",
+  "condition": {},
+  "description": "家计通 UniApp 小程序"
 }
