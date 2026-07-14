@@ -7,8 +7,13 @@
   "transformPx": false,
   "vueVersion": "3",
   "mp-weixin": {
-    "appid": "wxXXXXXXXX",
+    "appid": "wx507aa102dc9eed90",
     "cloudfunctionRoot": "cloudfunctions/",
+    "envId": {
+      "dev": "cloud1-0g12dcf7941e979c",
+      "staging": "cloud1-0g12dcf7941e979c",
+      "prod": "cloud1-0g12dcf7941e979c"
+    },
     "setting": {
       "urlCheck": true,
       "es6": true,

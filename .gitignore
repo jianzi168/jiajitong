@@ -39,3 +39,7 @@ coverage/
 
 # 项目历史污染：仅本地参考用，不入库
 HISTORY_OLD_REPO.md
+
+# HBuilderX / 微信开发者工具本地生成（不在工程根的临时配置）
+/project.config.json
+/project.private.config.json
