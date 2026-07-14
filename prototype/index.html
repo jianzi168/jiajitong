@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>家计通 · UI 原型</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="prototype-shell">
+    <aside class="proto-nav">
+      <h1>家计通 UI 原型</h1>
+      <p class="proto-hint">375px 小程序视口 · 左侧切换页面 · 页内按钮可串联流程</p>
+      <nav id="screenNav"></nav>
+    </aside>
+    <main class="device-frame">
+      <div class="device-notch"></div>
+      <div class="device-screen" id="deviceScreen"></div>
+      <div class="device-home-indicator"></div>
+    </main>
+  </div>
+
+  <!-- P-01 -->
+  <template id="tpl-landing">
+    <section class="screen" data-id="landing">
+      <div class="screen-body landing">
+        <div class="hero-illustration" aria-hidden="true">
+          <svg viewBox="0 0 120 120" width="120" height="120">
+            <circle cx="60" cy="60" r="56" fill="#E8F5F2"/>
+            <path d="M35 75 Q60 45 85 75" stroke="#2D8B7A" stroke-width="3" fill="none"/>
+            <circle cx="45" cy="52" r="8" fill="#E8956A"/>
+            <circle cx="75" cy="52" r="8" fill="#2D8B7A"/>
+          </svg>
+        </div>
+        <h1 class="landing-title">刚结婚，准备要娃？<br>3 分钟知道合理家庭预算</h1>
+        <p class="landing-sub">基于城市、收入与家庭结构，科学测算你的家庭财务规划</p>
+        <button class="btn btn-primary" data-go="quick-1">免费开始测算</button>
+        <button class="btn btn-ghost" data-go="login">完整规划向导</button>
+        <button class="btn btn-ghost btn-sm-text" data-go="home-empty">查看空态首页</button>
+        <p class="trust-bar">数据加密 · 不算理财 · 不卖贷款</p>
+        <p class="social-proof">已为 1,024 个家庭生成规划书</p>
+      </div>
+    </section>
+  </template>
+
+  <!-- P-02 steps -->
+  <template id="tpl-quick-1">
+    <section class="screen" data-id="quick-1">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="landing" aria-label="返回">←</button>
+        <span>快速测算</span>
+        <div class="step-dots"><span class="on"></span><span></span><span></span></div>
+      </header>
+      <div class="screen-body">
+        <h2 class="field-label">你所在的城市？</h2>
+        <div class="select-field">上海 <span>▼</span></div>
+        <button class="btn btn-primary" data-go="quick-2">下一步</button>
+        <button class="link-btn align-left" data-go="error-city">演示：城市未覆盖</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-quick-2">
+    <section class="screen" data-id="quick-2">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="quick-1" aria-label="返回">←</button>
+        <span>快速测算</span>
+        <div class="step-dots"><span class="on"></span><span class="on"></span><span></span></div>
+      </header>
+      <div class="screen-body">
+        <h2 class="field-label">家庭月收入（税后）</h2>
+        <div class="amount-field">¥ <input type="text" value="32,000"></div>
+        <p class="field-hint">可拖动滑块快速调整</p>
+        <input type="range" class="range-input" min="10000" max="80000" value="32000">
+        <button class="btn btn-primary" data-go="quick-3">下一步</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-quick-3">
+    <section class="screen" data-id="quick-3">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="quick-2" aria-label="返回">←</button>
+        <span>快速测算</span>
+        <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span></div>
+      </header>
+      <div class="screen-body">
+        <h2 class="field-label">房贷或房租（月）</h2>
+        <div class="amount-field">¥ <input type="text" value="11,000"></div>
+        <button class="btn btn-primary" data-go="quick-result">查看测算结果</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-quick-result">
+    <section class="screen" data-id="quick-result">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="quick-3" aria-label="返回">←</button>
+        <span>测算结果</span>
+        <span></span>
+      </header>
+      <div class="screen-body center">
+        <div class="score-ring">
+          <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fill" style="stroke-dasharray:326;stroke-dashoffset:72"/></svg>
+          <div class="score-num">78</div>
+        </div>
+        <p class="score-label">家庭财务健康分</p>
+        <span class="badge badge-green">稳健区间</span>
+        <div class="card highlight-card">
+          <div class="card-caption">合理生活预算区间</div>
+          <div class="card-value">¥8,200 — ¥10,800 / 月</div>
+        </div>
+        <div class="tip-card">
+          <strong>建议</strong>
+          <p>餐饮占比可能偏高，建议关注外卖频率，预计月省 ¥400–600。</p>
+        </div>
+        <button class="btn btn-primary" data-go="login">登录查看完整规划书</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-login">
+    <section class="screen" data-id="login">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="quick-result" aria-label="返回">←</button>
+        <span>登录</span>
+        <span></span>
+      </header>
+      <div class="screen-body center login-body">
+        <div class="login-logo">家计通</div>
+        <p class="login-desc">登录后保存规划书、追踪预算<br>数据加密存储，仅用于财务规划</p>
+        <button class="btn btn-wechat" data-action="simulate-login">
+          <span class="wechat-icon">微</span> 微信一键登录
+        </button>
+        <p class="login-legal">登录即表示同意《用户协议》与《隐私政策》</p>
+        <p class="field-hint">快测数据将自动带入完整向导</p>
+      </div>
+    </section>
+  </template>
+
+  <!-- Wizard 1-5 -->
+  <template id="tpl-wizard-1">
+    <section class="screen" data-id="wizard-1">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="landing" aria-label="返回">←</button>
+        <span>家庭财务规划</span>
+        <span class="step-text">1/5</span>
+      </header>
+      <div class="progress-steps"><span class="done"></span><span></span><span></span><span></span><span></span></div>
+      <div class="screen-body">
+        <h2 class="section-title">你们目前处于哪个阶段？</h2>
+        <div class="option-card">
+          <div class="option-icon">💑</div>
+          <div><strong>新婚磨合期</strong><br><small>暂无生育计划</small></div>
+        </div>
+        <div class="option-card selected">
+          <div class="option-icon">🤰</div>
+          <div><strong>备孕中</strong><br><small>正在准备要宝宝</small></div>
+        </div>
+        <div class="option-card">
+          <div class="option-icon">📅</div>
+          <div><strong>计划未来生育</strong><br><small>选择预计年份</small></div>
+        </div>
+        <button class="btn btn-primary" data-go="wizard-2">下一步</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-wizard-2">
+    <section class="screen" data-id="wizard-2">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="wizard-1" aria-label="返回">←</button>
+        <span>家庭财务规划</span>
+        <span class="step-text">2/5</span>
+      </header>
+      <div class="progress-steps"><span class="done"></span><span class="done"></span><span></span><span></span><span></span></div>
+      <div class="screen-body">
+        <h2 class="field-label">所在城市</h2>
+        <div class="select-field">上海 <span>▼</span></div>
+        <h2 class="field-label">家庭月收入（税后）</h2>
+        <div class="income-split">
+          <div class="amount-field sm">我的 <input type="text" value="18,000"></div>
+          <div class="amount-field sm">配偶 <input type="text" value="14,000"></div>
+        </div>
+        <p class="income-total">合计 ¥32,000</p>
+        <h2 class="field-label">收入稳定性</h2>
+        <div class="radio-row">
+          <label class="radio-chip selected"><input type="radio" name="stability" checked> 稳定</label>
+          <label class="radio-chip"><input type="radio" name="stability"> 含奖金</label>
+          <label class="radio-chip"><input type="radio" name="stability"> 一方波动</label>
+        </div>
+        <button class="btn btn-primary" data-go="wizard-3">下一步</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-wizard-3">
+    <section class="screen" data-id="wizard-3">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="wizard-2" aria-label="返回">←</button>
+        <span>家庭财务规划</span>
+        <span class="step-text">3/5</span>
+      </header>
+      <div class="progress-steps"><span class="done"></span><span class="done"></span><span class="done"></span><span></span><span></span></div>
+      <div class="screen-body scroll">
+        <h2 class="field-label">房贷或房租 *</h2>
+        <div class="amount-field">¥ <input type="text" value="11,000"></div>
+        <h2 class="field-label">车贷 / 停车</h2>
+        <div class="amount-field">¥ <input type="text" value="500"></div>
+        <h2 class="field-label">保险（含社保补充）</h2>
+        <div class="amount-field">¥ <input type="text" value="800"></div>
+        <h2 class="field-label">赡养父母</h2>
+        <div class="amount-field">¥ <input type="text" value="2,000"></div>
+        <button class="link-btn align-left">+ 添加其他固定项</button>
+        <div class="summary-bar ok">
+          <span>固定支出 ¥14,300</span>
+          <span>占收入 44.7%</span>
+          <span class="badge badge-green">正常</span>
+        </div>
+        <button class="btn btn-primary" data-go="wizard-4">下一步</button>
+        <button class="link-btn align-left" data-go="wizard-3-warn">演示：占比过高</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-wizard-3-warn">
+    <section class="screen" data-id="wizard-3-warn">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="wizard-3" aria-label="返回">←</button>
+        <span>家庭财务规划</span>
+        <span class="step-text">3/5</span>
+      </header>
+      <div class="progress-steps"><span class="done"></span><span class="done"></span><span class="done"></span><span></span><span></span></div>
+      <div class="screen-body scroll">
+        <h2 class="field-label">房贷或房租 *</h2>
+        <div class="amount-field">¥ <input type="text" value="28,000"></div>
+        <div class="summary-bar warn">
+          <span>固定支出 ¥29,500</span>
+          <span>占收入 92.2%</span>
+          <span class="badge badge-yellow">偏高</span>
+        </div>
+        <button class="btn btn-primary" data-go="error-imbalance">下一步</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-wizard-4">
+    <section class="screen" data-id="wizard-4">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="wizard-3" aria-label="返回">←</button>
+        <span>家庭财务规划</span>
+        <span class="step-text">4/5</span>
+      </header>
+      <div class="progress-steps"><span class="done"></span><span class="done"></span><span class="done"></span><span class="done"></span><span></span></div>
+      <div class="screen-body scroll">
+        <h2 class="field-label">每月储蓄目标</h2>
+        <div class="amount-field">¥ <input type="text" value="6,400"></div>
+        <p class="field-hint">建议为收入的 20%</p>
+        <h2 class="field-label">当前应急金（已存）</h2>
+        <div class="amount-field">¥ <input type="text" value="50,000"></div>
+        <div class="section-divider">备育专项</div>
+        <h2 class="field-label">推荐储备金 <button class="link-btn inline">?</button></h2>
+        <div class="amount-field">¥ <input type="text" value="80,000"></div>
+        <h2 class="field-label">计划生育时间</h2>
+        <div class="select-field">2027 年 6 月 <span>▼</span></div>
+        <div class="card baby-hint">
+          <p>距目标还有 <strong>18 个月</strong> · 建议每月储备 <strong>¥4,000</strong></p>
+        </div>
+        <button class="btn btn-primary" data-go="wizard-5">下一步</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-wizard-5">
+    <section class="screen" data-id="wizard-5">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="wizard-4" aria-label="返回">←</button>
+        <span>确认信息</span>
+        <span class="step-text">5/5</span>
+      </header>
+      <div class="progress-steps"><span class="done"></span><span class="done"></span><span class="done"></span><span class="done"></span><span class="done"></span></div>
+      <div class="screen-body">
+        <div class="card confirm-card">
+          <div class="confirm-row"><span>月收入</span><strong>¥32,000</strong></div>
+          <div class="confirm-row"><span>固定支出</span><strong>¥14,300</strong></div>
+          <div class="confirm-row"><span>储蓄目标</span><strong>¥6,400</strong></div>
+          <div class="confirm-row highlight"><span>可支配</span><strong>¥11,300</strong></div>
+        </div>
+        <p class="field-hint center-text">免费版本月还可测算 1 次</p>
+        <button class="btn btn-primary" data-action="simulate-loading">生成我的家庭规划书</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-wizard-loading">
+    <section class="screen" data-id="wizard-loading">
+      <div class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <p class="loading-text" id="loadingText">匹配上海消费数据…</p>
+        <div class="loading-steps">
+          <span class="active">匹配城市数据</span>
+          <span>推算预算区间</span>
+          <span>生成专属建议</span>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <!-- P-08 Report preview -->
+  <template id="tpl-report">
+    <section class="screen" data-id="report">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="wizard-5" aria-label="返回">←</button>
+        <span>家庭财务规划书</span>
+        <button class="icon-btn" data-go="share" aria-label="分享">↗</button>
+      </header>
+      <div class="screen-body scroll">
+        <div class="report-header center">
+          <div class="score-ring sm">
+            <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fill" style="stroke-dasharray:326;stroke-dashoffset:59"/></svg>
+            <div class="score-num">82</div>
+          </div>
+          <p class="meta-line"><span class="badge badge-green">🟢 稳健</span> 上海 · 备孕中</p>
+          <p class="report-date">生成于 2026-06-11</p>
+        </div>
+        <div class="stat-row">
+          <div><span class="stat-val">20%</span><span class="stat-key">储蓄率</span></div>
+          <div><span class="stat-val">45%</span><span class="stat-key">固定占比</span></div>
+          <div><span class="stat-val">3.9月</span><span class="stat-key">备用金</span></div>
+        </div>
+        <h3 class="block-title">收支总览</h3>
+        <div class="card confirm-card compact">
+          <div class="confirm-row"><span>月收入</span><strong>¥32,000</strong></div>
+          <div class="confirm-row"><span>固定支出</span><strong>¥14,300</strong></div>
+          <div class="confirm-row"><span>储蓄</span><strong>¥6,400</strong></div>
+          <div class="confirm-row"><span>可支配</span><strong>¥11,300</strong></div>
+        </div>
+        <h3 class="block-title">月度预算建议</h3>
+        <div class="budget-row"><span>餐饮</span><span>¥3,600</span><span class="range">11.2%</span></div>
+        <div class="budget-row"><span>日用</span><span>¥1,800</span><span class="range">5.6%</span></div>
+        <div class="budget-row locked"><span>娱乐</span><span class="blur">¥2,000</span><button class="link-btn" data-go="paywall">解锁</button></div>
+        <div class="budget-row locked"><span>医疗</span><span class="blur">¥1,200</span><button class="link-btn" data-go="paywall">解锁</button></div>
+        <div class="budget-row locked"><span>服饰</span><span class="blur">¥900</span><button class="link-btn" data-go="paywall">解锁</button></div>
+        <div class="baby-section teaser">
+          <h3 class="block-title">备育专项 <span class="badge badge-yellow">摘要</span></h3>
+          <p class="field-hint">首年育儿增量约 ¥3,200/月 · 储备进度 40%</p>
+          <button class="link-btn" data-go="paywall">查看完整备育规划 →</button>
+        </div>
+        <h3 class="block-title">优化建议</h3>
+        <div class="tip-card accent-border">
+          <strong>餐饮占比偏高</strong>
+          <p>建议减少外卖至每周 ≤3 次，预计月省 ¥400–600。</p>
+        </div>
+        <div class="tip-card locked-card">
+          <p class="blur-text">还有 4 条专属建议…</p>
+          <button class="btn btn-secondary btn-sm" data-go="paywall">开通 Pro 查看全部</button>
+        </div>
+        <h3 class="block-title">下一步</h3>
+        <div class="checklist">
+          <button class="check-item done" data-go="dashboard">✓ 启用预算追踪</button>
+          <button class="check-item" data-go="partner">邀请伴侣一起查看</button>
+          <button class="check-item" data-go="setup-reminder">设置周度填报提醒</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" data-go="paywall">¥19.9 完整报告</button>
+          <button class="btn btn-secondary" data-go="report-full">预览完整版</button>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <!-- P-09 Full report -->
+  <template id="tpl-report-full">
+    <section class="screen" data-id="report-full">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="report" aria-label="返回">←</button>
+        <span>完整规划书</span>
+        <button class="link-btn">PDF</button>
+      </header>
+      <div class="screen-body scroll">
+        <div class="report-header center">
+          <div class="score-ring sm"><div class="score-num">82</div></div>
+          <p class="meta-line"><span class="badge badge-green">🟢 稳健</span> 上海 · 备孕中</p>
+        </div>
+        <h3 class="block-title">月度预算（7 大类）</h3>
+        <div class="budget-row"><span>餐饮</span><span>¥3,600</span><span class="range">2,700–4,500</span></div>
+        <div class="budget-row"><span>日用</span><span>¥1,800</span><span class="range">1,350–2,250</span></div>
+        <div class="budget-row"><span>娱乐</span><span>¥2,000</span><span class="range">1,500–2,500</span></div>
+        <div class="budget-row"><span>医疗</span><span>¥1,200</span><span class="range">900–1,500</span></div>
+        <div class="budget-row"><span>服饰</span><span>¥900</span><span class="range">675–1,125</span></div>
+        <div class="budget-row"><span>交通通讯</span><span>¥600</span><span class="range">450–750</span></div>
+        <div class="budget-row"><span>其他</span><span>¥1,200</span><span class="range">900–1,500</span></div>
+        <button class="expand-row" data-toggle="basis-1">餐饮 计算依据 ▼</button>
+        <div class="expand-panel" id="basis-1">
+          <p>基准 ¥2,100 × 家庭系数 1.8 × 城市系数 1.35 = ¥5,103 → 归一 ¥3,600</p>
+          <p class="field-hint">数据来源：城镇消费支出统计 2025Q1</p>
+        </div>
+        <div class="baby-section">
+          <h3 class="block-title">备育专项</h3>
+          <div class="confirm-row"><span>首年育儿增量</span><strong>¥3,200/月</strong></div>
+          <div class="confirm-row"><span>储备目标</span><strong>¥80,000</strong></div>
+          <div class="confirm-row"><span>已储备</span><strong>¥32,000 (40%)</strong></div>
+          <div class="confirm-row"><span>距计划生育</span><strong>18 个月</strong></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:40%"></div></div>
+        </div>
+        <h3 class="block-title">抗风险报告</h3>
+        <div class="card risk-card">
+          <div class="risk-item ok"><span>备用金</span><span>3.9 个月 🟢</span></div>
+          <div class="risk-item ok"><span>固定支出占比</span><span>45% 🟢</span></div>
+          <div class="risk-item warn"><span>储蓄率</span><span>20% 🟡</span></div>
+          <p class="field-hint">备育前建议备用金 ≥ 6 个月</p>
+        </div>
+        <h3 class="block-title">优化建议 (5)</h3>
+        <div class="action-card warn">
+          <strong>备育储备压力</strong>
+          <ol class="action-list">
+            <li>娱乐预算从 ¥2,000 调至 ¥1,500</li>
+            <li>设立备育专户自动转 ¥3,000/月</li>
+          </ol>
+          <p class="impact">预估影响：每月多储备 ¥800–1,200</p>
+        </div>
+        <button class="btn btn-primary" data-go="dashboard">启用预算追踪</button>
+        <button class="btn btn-secondary" data-go="partner">邀请伴侣</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-setup-reminder">
+    <section class="screen" data-id="setup-reminder">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="report" aria-label="返回">←</button>
+        <span>周度提醒</span>
+        <span></span>
+      </header>
+      <div class="screen-body center">
+        <div class="empty-icon">🔔</div>
+        <h2 class="section-title">每周日提醒你填报</h2>
+        <p class="field-hint">只需 30 秒更新 7 大类支出<br>不打扰、不推销</p>
+        <button class="btn btn-primary">开启订阅消息</button>
+        <button class="btn btn-ghost" data-go="dashboard">稍后再说</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-share">
+    <section class="screen" data-id="share">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="report" aria-label="返回">←</button>
+        <span>分享预览</span>
+        <button class="link-btn">保存图片</button>
+      </header>
+      <div class="screen-body center">
+        <div class="share-poster">
+          <div class="poster-brand">家计通</div>
+          <div class="poster-score">82</div>
+          <div class="poster-label">家庭财务健康分</div>
+          <div class="poster-meta">上海 · 备育家庭</div>
+          <div class="poster-desc">财务处于稳健区间</div>
+          <div class="poster-stats"><span>储蓄率 20%</span><span>固定占比 45%</span></div>
+          <div class="poster-qr">QR</div>
+          <div class="poster-foot">扫码测测你家预算</div>
+        </div>
+        <label class="checkbox-row"><input type="checkbox"> 仅分享分数，隐藏比例</label>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-home">
+    <section class="screen" data-id="home">
+      <header class="top-bar simple">
+        <span class="page-title">晓雯的家庭</span>
+        <button class="link-btn" data-go="wizard-1">重新测算</button>
+      </header>
+      <div class="screen-body scroll with-tab">
+        <div class="card score-card" data-go="report">
+          <div class="score-inline"><span class="big">82</span> 分 <span class="badge badge-green">稳健</span></div>
+          <span class="chevron">查看完整规划书 ›</span>
+        </div>
+        <div class="card savings-card">
+          <div class="card-caption">本月储蓄目标</div>
+          <div class="card-value-sm">已存 ¥4,800 / ¥6,400 <strong>75%</strong></div>
+          <div class="progress-bar"><div class="progress-fill warn" style="width:75%"></div></div>
+        </div>
+        <div class="card baby-card">
+          <div class="card-caption">备育储备</div>
+          <div class="card-value-sm">¥32,000 / ¥80,000 · 40% · 18 个月</div>
+          <div class="progress-bar"><div class="progress-fill" style="width:40%"></div></div>
+        </div>
+        <h3 class="block-title">待处理建议 (2)</h3>
+        <div class="tip-card accent-border" data-go="actions">
+          <strong>备育储备压力</strong>
+          <p>建议每月额外储备 ¥4,000…</p>
+        </div>
+        <div class="tip-card" data-go="actions">
+          <strong>餐饮优化</strong>
+          <p>减少外卖频率…</p>
+        </div>
+      </div>
+      <nav class="tab-bar">
+        <button class="active" data-go="home"><span>🏠</span>首页</button>
+        <button data-go="dashboard"><span>📊</span>看板</button>
+        <button data-go="profile"><span>👤</span>我的</button>
+      </nav>
+    </section>
+  </template>
+
+  <template id="tpl-home-empty">
+    <section class="screen" data-id="home-empty">
+      <header class="top-bar simple"><span class="page-title">家计通</span><span></span></header>
+      <div class="screen-body center with-tab empty-body">
+        <div class="empty-icon">📋</div>
+        <h2 class="section-title">还没有家庭规划书</h2>
+        <p class="field-hint">3 分钟测算，了解你的合理家庭预算</p>
+        <button class="btn btn-primary" data-go="quick-1">开始测算</button>
+      </div>
+      <nav class="tab-bar">
+        <button class="active" data-go="home-empty"><span>🏠</span>首页</button>
+        <button data-go="dashboard-empty"><span>📊</span>看板</button>
+        <button data-go="profile"><span>👤</span>我的</button>
+      </nav>
+    </section>
+  </template>
+
+  <template id="tpl-dashboard">
+    <section class="screen" data-id="dashboard">
+      <header class="top-bar simple">
+        <span class="page-title">6月预算</span>
+        <button class="link-btn" data-go="review">历史复盘</button>
+      </header>
+      <div class="screen-body scroll with-tab">
+        <div class="card overview-card">
+          <div class="card-caption">可支配预算</div>
+          <div class="card-value">¥11,300</div>
+          <div class="progress-bar"><div class="progress-fill warn" style="width:68%"></div></div>
+          <div class="progress-meta">已用 68% · 剩余 ¥3,616 · 还剩 12 天 · 日均 ¥301</div>
+        </div>
+        <div class="card savings-card">
+          <div class="card-caption">本月储蓄目标</div>
+          <div class="card-value-sm">¥4,800 / ¥6,400 <strong>75%</strong></div>
+          <div class="progress-bar"><div class="progress-fill warn" style="width:75%"></div></div>
+        </div>
+        <div class="card baby-card">
+          <div class="card-caption">备育储备</div>
+          <div class="card-value-sm">¥32,000 / ¥80,000 <strong>40%</strong></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:40%"></div></div>
+          <div class="progress-meta">距计划生育还有 18 个月</div>
+        </div>
+        <h3 class="block-title">分类进度</h3>
+        <div class="category-row"><div class="cat-head"><span>餐饮 ⚠️</span><span>¥2,880/3,600</span></div><div class="progress-bar sm"><div class="progress-fill warn" style="width:80%"></div></div></div>
+        <div class="category-row"><div class="cat-head"><span>日用</span><span>¥900/1,800</span></div><div class="progress-bar sm"><div class="progress-fill ok" style="width:50%"></div></div></div>
+        <div class="category-row"><div class="cat-head"><span>娱乐 🔴</span><span>¥2,000/2,000</span></div><div class="progress-bar sm"><div class="progress-fill danger" style="width:100%"></div></div></div>
+        <div class="category-row"><div class="cat-head"><span>医疗</span><span>¥600/1,200</span></div><div class="progress-bar sm"><div class="progress-fill ok" style="width:50%"></div></div></div>
+        <div class="category-row"><div class="cat-head"><span>服饰</span><span>¥450/900</span></div><div class="progress-bar sm"><div class="progress-fill ok" style="width:50%"></div></div></div>
+        <div class="category-row"><div class="cat-head"><span>交通通讯</span><span>¥420/600</span></div><div class="progress-bar sm"><div class="progress-fill warn" style="width:70%"></div></div></div>
+        <div class="category-row"><div class="cat-head"><span>其他</span><span>¥366/1,200</span></div><div class="progress-bar sm"><div class="progress-fill ok" style="width:30%"></div></div></div>
+        <div class="btn-row">
+          <button class="btn btn-primary" data-go="weekly">填写本周支出</button>
+          <button class="btn btn-secondary" data-go="actions">行动清单</button>
+        </div>
+      </div>
+      <nav class="tab-bar">
+        <button data-go="home"><span>🏠</span>首页</button>
+        <button class="active" data-go="dashboard"><span>📊</span>看板</button>
+        <button data-go="profile"><span>👤</span>我的</button>
+      </nav>
+    </section>
+  </template>
+
+  <template id="tpl-dashboard-empty">
+    <section class="screen" data-id="dashboard-empty">
+      <header class="top-bar simple"><span class="page-title">预算看板</span><span></span></header>
+      <div class="screen-body center with-tab empty-body">
+        <div class="empty-icon">📊</div>
+        <h2 class="section-title">启用预算追踪后查看</h2>
+        <p class="field-hint">先完成家庭财务规划测算</p>
+        <button class="btn btn-primary" data-go="quick-1">去测算</button>
+      </div>
+      <nav class="tab-bar">
+        <button data-go="home-empty"><span>🏠</span>首页</button>
+        <button class="active" data-go="dashboard-empty"><span>📊</span>看板</button>
+        <button data-go="profile"><span>👤</span>我的</button>
+      </nav>
+    </section>
+  </template>
+
+  <template id="tpl-weekly">
+    <section class="screen" data-id="weekly">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="dashboard" aria-label="返回">←</button>
+        <span>本周支出</span>
+        <span></span>
+      </header>
+      <div class="screen-body scroll">
+        <p class="week-label">第 24 周 · 6/9 — 6/15</p>
+        <button class="link-btn align-left">复制上周数据</button>
+        <div class="weekly-form">
+          <label>餐饮<input type="text" value="680"></label>
+          <label>日用百货<input type="text" value="120"></label>
+          <label>娱乐休闲<input type="text" value="350"></label>
+          <label>医疗健康<input type="text" value="0"></label>
+          <label>服饰美容<input type="text" value="200"></label>
+          <label>交通通讯<input type="text" value="85"></label>
+          <label>其他<input type="text" value="0"></label>
+        </div>
+        <p class="week-total">本周合计 <strong>¥1,435</strong></p>
+        <button class="btn btn-primary" data-go="dashboard">提交</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-actions">
+    <section class="screen" data-id="actions">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="dashboard" aria-label="返回">←</button>
+        <span>行动清单</span>
+        <span class="caption">3 条待处理</span>
+      </header>
+      <div class="screen-body scroll">
+        <div class="action-card warn">
+          <strong>⚠️ 备育储备压力</strong>
+          <p>按当前储蓄率，距目标还差 ¥48,000。</p>
+          <ol class="action-list">
+            <li>娱乐预算从 ¥2,000 调至 ¥1,500</li>
+            <li>设立「备育账户」自动转 ¥3,000/月</li>
+            <li>与伴侣共同确认生育时间线</li>
+          </ol>
+          <p class="impact">预估影响：每月多储备 ¥800–1,200</p>
+          <div class="action-btns">
+            <button class="chip active">已采纳</button>
+            <button class="chip">稍后</button>
+            <button class="chip">忽略</button>
+          </div>
+        </div>
+        <div class="action-card">
+          <strong>餐饮优化</strong>
+          <p>外卖频率偏高，建议每周 ≤3 次。</p>
+          <ol class="action-list">
+            <li>设定「在家做饭日」每周 3 天</li>
+          </ol>
+          <p class="impact">预估影响：月省 ¥400–600</p>
+          <div class="action-btns">
+            <button class="chip">已采纳</button>
+            <button class="chip">稍后</button>
+            <button class="chip">忽略</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-partner">
+    <section class="screen" data-id="partner">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="report" aria-label="返回">←</button>
+        <span>邀请伴侣</span>
+        <span></span>
+      </header>
+      <div class="screen-body center">
+        <div class="empty-icon">👫</div>
+        <h2 class="section-title">邀请 TA 一起查看</h2>
+        <p class="field-hint">共享规划书与预算看板（只读）<br>共同确认家庭预算</p>
+        <button class="btn btn-primary">发送微信邀请</button>
+        <div class="card partner-status">
+          <div class="confirm-row"><span>晓雯（我）</span><strong>管理员</strong></div>
+          <div class="confirm-row"><span>阿哲（伴侣）</span><strong class="text-muted">待加入</strong></div>
+        </div>
+        <button class="btn btn-secondary" data-go="report-full">共同确认预算</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-review">
+    <section class="screen" data-id="review">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="dashboard" aria-label="返回">←</button>
+        <span>5月复盘</span>
+        <span></span>
+      </header>
+      <div class="screen-body scroll">
+        <div class="card">
+          <div class="stat-row flat">
+            <div><span class="stat-val">87%</span><span class="stat-key">执行率</span></div>
+            <div><span class="stat-val">78→82</span><span class="stat-key">健康分</span></div>
+          </div>
+        </div>
+        <h3 class="block-title">超支 Top</h3>
+        <div class="budget-row"><span>1. 娱乐</span><span>+¥400</span><span class="range danger-text">超支</span></div>
+        <div class="budget-row"><span>2. 餐饮</span><span>+¥180</span><span class="range danger-text">超支</span></div>
+        <h3 class="block-title">结余 Top</h3>
+        <div class="budget-row"><span>1. 医疗</span><span>-¥200</span><span class="range">结余</span></div>
+        <div class="tip-card">
+          <strong>建议采纳效果</strong>
+          <p>餐饮优化建议已采纳，预计 6 月节省 ¥300。</p>
+        </div>
+        <button class="btn btn-secondary" data-go="report-full">查看完整报告</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-paywall">
+    <section class="screen" data-id="paywall">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="report" aria-label="返回">←</button>
+        <span>解锁完整规划</span>
+        <span></span>
+      </header>
+      <div class="screen-body scroll">
+        <div class="price-card"><div class="price-tag">首发 ¥9.9</div><h3>单次完整报告</h3><p>15–20 页 PDF + 7 天 Pro</p><button class="btn btn-secondary" data-go="report-full">立即购买</button></div>
+        <div class="price-card featured"><div class="price-tag">推荐</div><h3>Pro 年付</h3><p class="price-big">¥68<span>/年</span></p><ul class="check-list"><li>无限次测算</li><li>全部建议 + PDF</li><li>月度复盘</li></ul><button class="btn btn-primary" data-go="report-full">开通 Pro</button></div>
+        <div class="price-card"><h3>家庭版 ¥128/年</h3><p>伴侣协同 + 备育模板</p><button class="btn btn-secondary" data-go="partner">了解家庭版</button></div>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-profile">
+    <section class="screen" data-id="profile">
+      <header class="profile-head">
+        <div class="avatar">晓</div>
+        <div><strong>晓雯的家庭</strong><p>上海 · 备孕中 · Pro 至 2027/06</p></div>
+      </header>
+      <div class="screen-body scroll with-tab">
+        <div class="menu-list">
+          <button data-go="family-profile">家庭档案 ›</button>
+          <button data-go="partner">伴侣管理 ›</button>
+          <button data-go="paywall">订阅管理 ›</button>
+          <button data-go="report-full">历史规划书 ›</button>
+          <button data-go="privacy">数据导出与隐私 ›</button>
+          <button>帮助与反馈 ›</button>
+        </div>
+      </div>
+      <nav class="tab-bar">
+        <button data-go="home"><span>🏠</span>首页</button>
+        <button data-go="dashboard"><span>📊</span>看板</button>
+        <button class="active" data-go="profile"><span>👤</span>我的</button>
+      </nav>
+    </section>
+  </template>
+
+  <template id="tpl-family-profile">
+    <section class="screen" data-id="family-profile">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="profile" aria-label="返回">←</button>
+        <span>家庭档案</span>
+        <button class="link-btn">保存</button>
+      </header>
+      <div class="screen-body scroll">
+        <h2 class="field-label">家庭名称</h2>
+        <div class="amount-field"><input type="text" value="晓雯的家庭" style="text-align:left;width:100%"></div>
+        <h2 class="field-label">所在城市</h2>
+        <div class="select-field">上海 <span>▼</span></div>
+        <h2 class="field-label">家庭阶段</h2>
+        <div class="radio-row vertical">
+          <label class="radio-chip"><input type="radio" name="stage"> 新婚磨合期</label>
+          <label class="radio-chip selected"><input type="radio" name="stage" checked> 备孕中</label>
+          <label class="radio-chip"><input type="radio" name="stage"> 计划未来生育</label>
+        </div>
+        <p class="field-hint">阶段变更后将建议重新测算</p>
+        <button class="btn btn-primary" data-go="wizard-1">重新测算</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-privacy">
+    <section class="screen" data-id="privacy">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="profile" aria-label="返回">←</button>
+        <span>隐私与导出</span>
+        <span></span>
+      </header>
+      <div class="screen-body scroll">
+        <div class="menu-list flush">
+          <button>导出规划书 PDF</button>
+          <button>导出预算数据 CSV</button>
+          <button>查看隐私政策</button>
+          <button class="danger-text">注销账号并删除数据</button>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-error-city">
+    <section class="screen" data-id="error-city">
+      <header class="top-bar">
+        <button class="icon-btn back" data-go="quick-1" aria-label="返回">←</button>
+        <span>选择城市</span>
+        <span></span>
+      </header>
+      <div class="screen-body">
+        <div class="select-field">临沂 <span>▼</span></div>
+        <div class="banner banner-info">您的城市即将开放，暂按<strong>新一线标准</strong>估算，结果标注为「估算值」</div>
+        <button class="btn btn-primary" data-go="quick-2">继续测算</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-error-imbalance">
+    <section class="screen" data-id="error-imbalance">
+      <div class="screen-body center empty-body">
+        <div class="empty-icon danger">⚠️</div>
+        <h2 class="section-title">收支严重失衡</h2>
+        <p class="field-hint">固定支出占收入 92%，无法生成合理预算<br>建议先优化固定开支或调整储蓄目标</p>
+        <div class="tip-card">
+          <strong>可尝试</strong>
+          <ol class="action-list">
+            <li>检查是否有可合并或削减的固定项</li>
+            <li>暂时降低储蓄目标，优先保障基本生活</li>
+            <li>联系 1v1 规划咨询（可选）</li>
+          </ol>
+        </div>
+        <button class="btn btn-primary" data-go="wizard-3-warn">返回修改</button>
+        <button class="btn btn-ghost" data-go="landing">退出</button>
+      </div>
+    </section>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

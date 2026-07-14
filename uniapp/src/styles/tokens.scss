@@ -1,0 +1,63 @@
+/* 家计通 v2 · 暖光 Bento 设计系统 · 全局 token
+ * 迁移自 prototype-v2/styles.css :root
+ * 说明：小程序按 750rpx 屏宽，原型按 375px 设计，px→rpx 数值 ×2。
+ * 颜色/渐变/透明度等无单位 token 原样保留。
+ */
+page {
+  /* 渐变 */
+  --grad-hero: linear-gradient(145deg, #FF6B8A 0%, #FF8A5C 45%, #C084FC 100%);
+  --grad-btn: linear-gradient(135deg, #FF6B8A 0%, #FF7E5F 100%);
+  --grad-score: linear-gradient(135deg, #FF6B8A, #A855F7);
+  --grad-mesh: radial-gradient(ellipse 80% 60% at 20% 10%, rgba(255, 107, 138, 0.35), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 20%, rgba(192, 132, 252, 0.3), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 50% 100%, rgba(255, 142, 95, 0.2), transparent 50%),
+    #FAF8F5;
+
+  /* 颜色 */
+  --color-bg: #FAF8F5;
+  --color-surface: #FFFFFF;
+  --color-text: #1C1917;
+  --color-text-2: #78716C;
+  --color-text-3: #A8A29E;
+  --color-border: rgba(28, 25, 23, 0.06);
+  --color-coral: #FF6B8A;
+  --color-peach: #FF8A5C;
+  --color-lilac: #A855F7;
+  --color-mint: #2DD4BF;
+  --color-amber: #FBBF24;
+  --color-danger: #F87171;
+
+  /* 玻璃拟态 */
+  --glass: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.9);
+
+  /* 阴影（含 px，小程序 box-shadow 用 rpx 更等比，此处 ×2） */
+  --shadow-soft: 0 8rpx 48rpx rgba(255, 107, 138, 0.08), 0 2rpx 6rpx rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 16rpx 64rpx rgba(28, 25, 23, 0.06);
+
+  /* 圆角 */
+  --radius-sm: 24rpx;
+  --radius-md: 32rpx;
+  --radius-lg: 40rpx;
+  --radius-xl: 56rpx;
+
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* mesh 渐变背景 */
+.mesh-bg {
+  background: var(--grad-mesh);
+  min-height: 100%;
+}
+
+/* 渐变文字（评分数字等） */
+.grad-text {
+  background: var(--grad-score);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}

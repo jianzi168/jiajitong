@@ -1,0 +1,116 @@
+{
+  "pages": [
+    {
+      "path": "pages/landing/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/home/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/home/empty",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/dashboard/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/dashboard/empty",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/profile/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/quick/step1",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/quick/step2",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/quick/step3",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/quick/result",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/login/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/weekly/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/actions/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/partner/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/review/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/paywall/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/setup-reminder/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/family/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/privacy/index",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/error/city",
+      "style": { "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/error/imbalance",
+      "style": { "navigationStyle": "custom" }
+    }
+  ],
+  "subPackages": [
+    {
+      "root": "subpackages/wizard",
+      "pages": [
+        { "path": "step1", "style": { "navigationStyle": "custom" } },
+        { "path": "step2", "style": { "navigationStyle": "custom" } },
+        { "path": "step3", "style": { "navigationStyle": "custom" } },
+        { "path": "step3-warn", "style": { "navigationStyle": "custom" } },
+        { "path": "step4", "style": { "navigationStyle": "custom" } },
+        { "path": "step5", "style": { "navigationStyle": "custom" } },
+        { "path": "loading", "style": { "navigationStyle": "custom" } }
+      ]
+    },
+    {
+      "root": "subpackages/report",
+      "pages": [
+        { "path": "preview", "style": { "navigationStyle": "custom" } },
+        { "path": "full", "style": { "navigationStyle": "custom" } },
+        { "path": "share", "style": { "navigationStyle": "custom" } }
+      ]
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "家计通",
+    "navigationBarBackgroundColor": "#FAF8F5",
+    "backgroundColor": "#FAF8F5"
+  }
+}
