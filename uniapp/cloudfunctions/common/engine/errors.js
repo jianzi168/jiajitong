@@ -8,6 +8,7 @@
  */
 
 const { IMBALANCE_RATIO, BABY_TOO_SOON_MONTHS } = require('./constants')
+const { ERROR_CODE } = require('../response')
 
 /**
  * 业务错误类。技术方案 §5.5 网关会捕获 code/message 并返回统一 fail。
@@ -32,12 +33,12 @@ function bizError(code, message, userHint, details) {
  */
 function detectImbalance(fixedExpense, income) {
   if (income <= 0) {
-    throw bizError(40001, 'IMBALANCE', '收入数据异常，请重新填写')
+    throw bizError(ERROR_CODE.IMBALANCE, 'IMBALANCE', '收入数据异常，请重新填写')
   }
   const ratio = fixedExpense / income
   if (ratio >= IMBALANCE_RATIO) {
     throw bizError(
-      40001,
+      ERROR_CODE.IMBALANCE,
       'IMBALANCE',
       `固定支出占收入 ${(ratio * 100).toFixed(0)}%，收支失衡，建议先梳理必选项`,
       { fixedExpense, income, ratio: Math.round(ratio * 10000) / 10000 }
