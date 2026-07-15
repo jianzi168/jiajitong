@@ -9,9 +9,9 @@
  */
 'use strict'
 
-const benchmark = require('../../common/benchmark-data')
-const engine = require('../../common/engine')
-const { ok, fail, ERROR_CODE } = require('../../common/response')
+const benchmark = require('../common/benchmark-data')
+const engine = require('../common/engine')
+const { ok, fail, ERROR_CODE } = require('../common/response')
 
 // ---------- cities.list ----------
 async function citiesList(ctx, payload) {

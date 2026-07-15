@@ -15,7 +15,7 @@
  */
 'use strict'
 
-const { ok, fail, ERROR_CODE } = require('../common/response')
+const { ok, fail, ERROR_CODE } = require('./common/response')
 const handlers = require('./handlers')
 
 // 兼容本地测试：检测 wx-server-sdk 是否可用

@@ -8,7 +8,7 @@ const { test, describe } = require('node:test')
 const assert = require('node:assert/strict')
 
 const { dispatch } = require('../uniapp/cloudfunctions/api')
-const { ERROR_CODE } = require('../uniapp/cloudfunctions/common/response')
+const { ERROR_CODE } = require('../uniapp/cloudfunctions/api/common/response')
 
 // ---------- cities.list ----------
 describe('cities.list', () => {

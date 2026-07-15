@@ -9,7 +9,7 @@
  */
 'use strict'
 
-const engine = require('../uniapp/cloudfunctions/common/engine')
+const engine = require('../uniapp/cloudfunctions/api/common/engine')
 
 const city = '上海'
 const income = 32000

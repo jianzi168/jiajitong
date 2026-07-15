@@ -4,14 +4,14 @@
  *       npm test (在 uniapp/ 下)
  *
  * 不引外部依赖，使用 Node 内置 node:test + node:assert
- * 引擎单一来源：uniapp/cloudfunctions/common/engine/
+ * 引擎单一来源：uniapp/cloudfunctions/api/common/engine/
  */
 'use strict'
 
 const { test, describe } = require('node:test')
 const assert = require('node:assert/strict')
 
-const engine = require('../uniapp/cloudfunctions/common/engine')
+const engine = require('../uniapp/cloudfunctions/api/common/engine')
 const {
   calcQuick, calcFull, calcHealthScore, calcBabyReserve,
   normalize, constants, errors, benchmark,
