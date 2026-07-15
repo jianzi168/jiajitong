@@ -1,18 +1,15 @@
 /**
- * 引擎调用客户端（ESM 写法 — UniApp <script setup> 与 Node demo 通用）
+ * 引擎调用客户端（前端 → 云函数 → 引擎）
  *
- * 平台自适应：
- * - 微信小程序（MP-WEIXIN）：wx.cloud.callFunction('api', { action, payload })
- * - 其他（H5 / Node / 本地开发）：直接 require 引擎本地跑（探针/fallback）
+ * 设计：
+ * - 前端永远通过 wx.cloud.callFunction('api', { action, payload }) 调用云函数
+ * - 云函数侧的 api 网关 (cloudfunctions/api/index.js) 调引擎
+ * - 前端不直接 import 引擎，避免 UniApp rollup 编译 CJS 模块的兼容问题
+ *   + 引擎代码也不会进入前端 bundle（节省包体积）
  *
  * 引擎单一来源：uniapp/cloudfunctions/common/engine/index.js
- * Phase 2 网关：uniapp/cloudfunctions/api/index.js
+ * 网关：uniapp/cloudfunctions/api/index.js
  */
-
-// ⚠️ 注意：此文件被 Vue <script setup> 用 ESM import()，必须用 import/export 语法
-// Node demo (scripts/demo-quick.js) 用 dynamic import() 调用，Node 14+ 支持
-
-import engine from '../../cloudfunctions/common/engine/index.js'
 
 /**
  * 检测是否在微信小程序环境
@@ -22,10 +19,16 @@ export function isMiniProgram() {
 }
 
 /**
- * 调云函数（MP 环境）
+ * 调云函数（所有环境）
+ * 在 H5/Node 等非 MP 环境抛错（前端必须跑在 MP-WEIXIN 里）
  */
 async function callCloud(action, payload) {
-  // #ifdef MP-WEIXIN
+  if (typeof wx === 'undefined' || !wx.cloud) {
+    throw new Error(
+      `engineClient.callCloud('${action}') 仅支持 MP-WEIXIN 环境。` +
+      `本地 Node 调试请用 scripts/demo-quick.mjs（直接调引擎不走云函数）。`
+    )
+  }
   const res = await wx.cloud.callFunction({
     name: 'api',
     data: { action, payload },
@@ -42,38 +45,27 @@ async function callCloud(action, payload) {
     throw err
   }
   return result.data
-  // #endif
 }
 
 /**
  * 快测
  */
 export async function callCalcQuick(input) {
-  if (isMiniProgram()) {
-    return callCloud('calc.quick', input)
-  }
-  return engine.calcQuick(input)
+  return callCloud('calc.quick', input)
 }
 
 /**
  * 完整测算
  */
 export async function callCalcFull(input) {
-  if (isMiniProgram()) {
-    return callCloud('calc.full', input)
-  }
-  return engine.calcFull(input)
+  return callCloud('calc.full', input)
 }
 
 /**
  * 开放城市列表
  */
 export async function callCitiesList() {
-  if (isMiniProgram()) {
-    return callCloud('cities.list', {})
-  }
-  const { cities } = engine.benchmark
-  return { cities: cities.map(c => ({ name: c.name, tier: c.tier, medianIncome: c.medianIncome })) }
+  return callCloud('cities.list', {})
 }
 
 export default {
