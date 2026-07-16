@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const root = path.join(__dirname, '../cloudfunctions/common/benchmark-data')
+const root = path.join(__dirname, '../cloudfunctions/api/common/benchmark-data')
 const cities = JSON.parse(fs.readFileSync(path.join(root, 'cities.json'), 'utf8'))
 
 if (cities.length !== 10) {

@@ -1,10 +1,13 @@
 <script setup>
 import { onLaunch, onShow } from '@dcloudio/uni-app'
+import { initCloud } from '@/services/cloud'
+import { getCloudEnvId, BUILD_ENV } from '@/config/cloud'
 
 onLaunch(() => {
   // #ifdef MP-WEIXIN
-  // TODO(Phase 1): initCloud() — wx.cloud.init({ env, traceUser: true })
-  // TODO(Phase 1): userStore().bootstrap()
+  initCloud(getCloudEnvId())
+  console.log('[App] onLaunch: cloud env =', BUILD_ENV, getCloudEnvId())
+  // TODO(Phase 6): userStore().bootstrap()
   // #endif
   // #ifndef MP-WEIXIN
   console.warn('家计通 MVP 仅支持微信小程序，当前平台不可用')
@@ -22,4 +25,3 @@ onShow(() => {})
 @import './styles/tokens.scss';
 @import './styles/common.scss';
 </style>
-

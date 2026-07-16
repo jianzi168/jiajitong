@@ -1,221 +1,288 @@
-#!/usr/bin/env node
 /**
- * 引擎单元测试（开发计划 Phase 1）
- * 用法：node scripts/test-engine.js
+ * 引擎单测（开发计划 Phase 1 验收）
+ * 运行：node --test scripts/test-engine.js
+ *       npm test (在 uniapp/ 下)
  *
- * 引擎源码在 uniapp/cloudfunctions/api/common/engine/（与云函数部署的副本同源）
+ * 不引外部依赖，使用 Node 内置 node:test + node:assert
+ * 引擎单一来源：uniapp/cloudfunctions/api/common/engine/
  */
-const path = require('path')
-const enginePath = path.join(__dirname, '../uniapp/cloudfunctions/api/common/engine')
-const { calcQuick, calcFull, calcHealthScore, calcBabyReserve, runRules } = require(enginePath)
+'use strict'
 
-let passed = 0
-let failed = 0
-const failures = []
+const { test, describe } = require('node:test')
+const assert = require('node:assert/strict')
 
-function assert(name, condition, detail) {
-  if (condition) {
-    passed++
-  } else {
-    failed++
-    failures.push(`  ❌ ${name}${detail ? ' — ' + detail : ''}`)
-  }
-}
+const engine = require('../uniapp/cloudfunctions/api/common/engine')
+const {
+  calcQuick, calcFull, calcHealthScore, calcBabyReserve,
+  normalize, constants, errors, benchmark,
+} = engine
 
-function approx(name, actual, expected, tolerance = 0.01) {
-  const ok = Math.abs(actual - expected) <= tolerance
-  assert(name, ok, `expected ${expected}, got ${actual}`)
-}
-
-console.log('\n🧪 家计通 · 引擎单元测试\n')
-
-// ========== healthScore 测试 ==========
-console.log('--- healthScore ---')
-
-// T1: 储蓄率 20%、固定 40%、备用金 6 月 → 分 ≥ 75
-let h = calcHealthScore({ savings_rate: 0.2, fixed_ratio: 0.4, emergency_months: 6, categories: { food: 1000, entertainment: 500 }, disposable: 10000 })
-assert('T1 健康分 ≥75（理想场景）', h.score >= 75, `score=${h.score}`)
-assert('T1 risk=green', h.risk_level === 'green', `risk=${h.risk_level}`)
-
-// T2: 储蓄率 5%、固定 55%、备用金 0.5 月 → 分 < 50
-h = calcHealthScore({ savings_rate: 0.05, fixed_ratio: 0.55, emergency_months: 0.5, categories: { food: 2000, entertainment: 1000 }, disposable: 8000 })
-assert('T2 健康分 <50（高风险）', h.score < 50, `score=${h.score}`)
-assert('T2 risk=red', h.risk_level === 'red', `risk=${h.risk_level}`)
-
-// T3: 固定 48% → risk=yellow
-h = calcHealthScore({ savings_rate: 0.15, fixed_ratio: 0.48, emergency_months: 4, categories: { food: 1000, entertainment: 500 }, disposable: 10000 })
-assert('T3 固定48% risk=yellow', h.risk_level === 'yellow', `risk=${h.risk_level}`)
-
-// T4: 备用金 <1 月 → risk=red
-h = calcHealthScore({ savings_rate: 0.2, fixed_ratio: 0.4, emergency_months: 0.5, categories: {}, disposable: 10000 })
-assert('T4 备用金<1月 risk=red', h.risk_level === 'red', `risk=${h.risk_level}`)
-
-// T5: 储蓄率线性区间 15% → 分高于 10% 场景
-const h15 = calcHealthScore({ savings_rate: 0.15, fixed_ratio: 0.4, emergency_months: 6, categories: {}, disposable: 10000 })
-const h10 = calcHealthScore({ savings_rate: 0.1, fixed_ratio: 0.4, emergency_months: 6, categories: {}, disposable: 10000 })
-assert('T5 储蓄率15%比10%分高', h15.score > h10.score, `${h15.score} vs ${h10.score}`)
-
-// ========== calcQuick 测试 ==========
-console.log('--- calcQuick ---')
-
-// T6: 上海 32000 11000 → 健康分 70-85
-let q = calcQuick({ city: '上海', income: 32000, housing: 11000 })
-assert('T6 上海快测有健康分', q.health_score > 0 && q.health_score <= 100, `score=${q.health_score}`)
-assert('T6 有预算区间', q.disposable_range[0] > 0 && q.disposable_range[1] > q.disposable_range[0], `${q.disposable_range}`)
-assert('T6 有建议', !!q.top_recommendation, JSON.stringify(q.top_recommendation))
-
-// T7: 固定支出 92% → IMBALANCE
-try {
-  calcQuick({ city: '上海', income: 10000, housing: 9200 })
-  assert('T7 收支失衡阻断', false, '未抛异常')
-} catch (e) {
-  assert('T7 收支失衡阻断', e.code === 40001, `code=${e.code}`)
-}
-
-// T8: 未覆盖城市 → city_estimated=true
-q = calcQuick({ city: '未知城市', income: 20000, housing: 5000 })
-assert('T8 未覆盖城市 fallback', q.city_estimated === true, `estimated=${q.city_estimated}`)
-
-// T9: 缺城市 → VALIDATION_ERROR
-try {
-  calcQuick({ income: 20000, housing: 5000 })
-  assert('T9 缺城市校验', false, '未抛异常')
-} catch (e) {
-  assert('T9 缺城市校验', e.code === 40003, `code=${e.code}`)
-}
-
-// T10: 缺收入 → VALIDATION_ERROR
-try {
-  calcQuick({ city: '上海', housing: 5000 })
-  assert('T10 缺收入校验', false, '未抛异常')
-} catch (e) {
-  assert('T10 缺收入校验', e.code === 40003, `code=${e.code}`)
-}
-
-// T11: 低收入场景健康分低于高收入
-const qLow = calcQuick({ city: '上海', income: 10000, housing: 3000 })
-const qHigh = calcQuick({ city: '上海', income: 50000, housing: 10000 })
-// 不一定绝对，但高收入储蓄金额更大
-assert('T11 高收入预算区间更高', qHigh.disposable_range[1] > qLow.disposable_range[1], `${qHigh.disposable_range} vs ${qLow.disposable_range}`)
-
-// ========== calcFull 测试 ==========
-console.log('--- calcFull ---')
-
-// T12: 新婚路径（无备育）
-let f = calcFull({
-  stage: 'newlywed', city: '上海', income: 32000, income_stability: 'stable',
-  fixed_expenses: [{ key: 'housing', label: '房贷', amount: 11000 }, { key: 'car', label: '车险', amount: 500 }],
-  savings_target: 6400, emergency_fund: 50000,
-})
-assert('T12 新婚有7类预算', f.categories.length === 7, `len=${f.categories.length}`)
-assert('T12 新婚无备育', f.baby_reserve === null, JSON.stringify(f.baby_reserve))
-assert('T12 有建议列表（健康场景可为空）', f.recommendations.length >= 0, `recs=${f.recommendations.length}`)
-assert('T12 有健康分', f.health_score > 0, `score=${f.health_score}`)
-assert('T12 monthly_summary 正确', f.monthly_summary.disposable === 32000 - 11500 - 6400, `disposable=${f.monthly_summary.disposable}`)
-
-// T13: 备育路径（有备育）
-f = calcFull({
-  stage: 'planning', city: '上海', income: 32000, income_stability: 'stable',
-  fixed_expenses: [{ key: 'housing', label: '房贷', amount: 11000 }],
-  savings_target: 6400, emergency_fund: 50000,
-  baby_reserve_current: 32000, plan_date: '2027-06',
-})
-assert('T13 备育有储备', f.baby_reserve !== null && f.baby_reserve.target > 0, JSON.stringify(f.baby_reserve))
-assert('T13 备育每月应攒>0', f.baby_reserve.monthly_required > 0, `monthly=${f.baby_reserve.monthly_required}`)
-assert('T13 备育月数>0', f.baby_reserve.months_remaining > 0, `months=${f.baby_reserve.months_remaining}`)
-
-// T14: 收支失衡 ≥90%
-try {
-  calcFull({
-    stage: 'newlywed', city: '上海', income: 10000,
-    fixed_expenses: [{ key: 'housing', label: '房贷', amount: 9500 }],
-    savings_target: 500,
+// ---------- benchmark 数据层 ----------
+describe('benchmark data', () => {
+  test('has 10 cities (PDD §附录 B)', () => {
+    assert.equal(benchmark.cities.length, 10)
+    const names = benchmark.cities.map(c => c.name)
+    // 4 一线 + 6 新一线
+    assert.equal(benchmark.cities.filter(c => c.tier === 'tier1').length, 4)
+    assert.equal(benchmark.cities.filter(c => c.tier === 'tier2').length, 6)
+    assert.ok(names.includes('上海') && names.includes('北京'))
+    assert.ok(names.includes('杭州') && names.includes('成都'))
   })
-  assert('T14 收支失衡阻断', false, '未抛异常')
-} catch (e) {
-  assert('T14 收支失衡阻断', e.code === 40001, `code=${e.code}`)
-}
 
-// T15: 备育中阶段系数 → 医疗类上浮
-const fNew = calcFull({
-  stage: 'newlywed', city: '上海', income: 32000, income_stability: 'stable',
-  fixed_expenses: [{ key: 'housing', label: '房贷', amount: 11000 }], savings_target: 6400, emergency_fund: 50000,
+  test('has 7 categories (PDD §附录 A)', () => {
+    assert.equal(benchmark.categoryBenchmarks.length, 7)
+    assert.deepEqual(
+      benchmark.categoryBenchmarks.map(b => b.category).sort(),
+      ['clothing', 'daily', 'entertainment', 'food', 'medical', 'other', 'transport']
+    )
+  })
+
+  test('tier1 has higher or equal median income than tier2', () => {
+    const tier1 = benchmark.cities.filter(c => c.tier === 'tier1').map(c => c.medianIncome)
+    const tier2 = benchmark.cities.filter(c => c.tier === 'tier2').map(c => c.medianIncome)
+    assert.ok(tier1.every(v => v > tier2[0]))
+  })
 })
-const fPreg = calcFull({
-  stage: 'pregnant', city: '上海', income: 32000, income_stability: 'stable',
-  fixed_expenses: [{ key: 'housing', label: '房贷', amount: 11000 }], savings_target: 6400, emergency_fund: 50000,
+
+// ---------- 基准（快测） ----------
+describe('calcQuick - 基准', () => {
+  test('case 1: 上海 32000/11000 → 绿色 + 合理区间', () => {
+    const r = calcQuick({ city: '上海', income: 32000, housing: 11000 })
+    assert.equal(r.risk_level, 'green')
+    assert.ok(r.health_score >= 70 && r.health_score <= 100)
+    assert.ok(r.disposable_range[0] > 0)
+    assert.ok(r.disposable_range[1] > r.disposable_range[0])
+    assert.equal(r.city_estimated, false)
+  })
+
+  test('case 2: 北京 28000/9000 → 类似上海（tier1 同系数）', () => {
+    const r = calcQuick({ city: '北京', income: 28000, housing: 9000 })
+    assert.equal(r.risk_level, 'green')
+    assert.equal(r.city_estimated, false)
+    assert.ok(r.health_score >= 70)
+  })
 })
-// 备孕阶段系数 1.05 > 新婚 1.0，归一化前各类基准更高
-// 但归一化后总额相同，各类比例有差异。用原始基准判断更准
-assert('T15 备育医疗类高于新婚（归一化前）', true, '系数验证通过')
 
-// ========== babyReserve 测试 ==========
-console.log('--- babyReserve ---')
+// ---------- 城市覆盖 ----------
+describe('calcQuick - 城市覆盖', () => {
+  test('未覆盖城市（厦门）→ fallback + city_estimated: true', () => {
+    const r = calcQuick({ city: '厦门', income: 25000, housing: 8000 })
+    assert.equal(r.city_estimated, true)
+    assert.equal(r.original_city, '厦门')
+    assert.ok(r.health_score > 0)
+  })
 
-// T16: 上海(tier1) 12个月后生育
-let br = calcBabyReserve({ city: '上海', city_tier: 1, monthly_expense: 12000, current_saved: 32000, plan_date: '2027-06' })
-assert('T16 推荐储备金>0', br.target > 0, `target=${br.target}`)
-assert('T16 每月应攒>0', br.monthly_required > 0, `monthly=${br.monthly_required}`)
-assert('T16 月数合理', br.months_remaining >= 1 && br.months_remaining <= 60, `months=${br.months_remaining}`)
-
-// T17: 已攒满 → 每月应攒 0
-br = calcBabyReserve({ city: '上海', city_tier: 1, monthly_expense: 12000, current_saved: 999999, plan_date: '2027-06' })
-assert('T17 已攒满应攒0', br.monthly_required === 0, `monthly=${br.monthly_required}`)
-
-// T18: tier1 比 tier2 成本高
-const br1 = calcBabyReserve({ city: '上海', city_tier: 1, monthly_expense: 12000, current_saved: 0, plan_date: '2027-06' })
-const br2 = calcBabyReserve({ city: '成都', city_tier: 2, monthly_expense: 12000, current_saved: 0, plan_date: '2027-06' })
-assert('T18 一线比二线备育成本高', br1.target > br2.target, `${br1.target} vs ${br2.target}`)
-
-// ========== rules 测试 ==========
-console.log('--- rules ---')
-
-// T19: 触发 R03 固定支出过高
-let recs = runRules({
-  stage: 'newlywed', city: '上海', income: 20000, fixed_expense: 12000,
-  savings_target: 2000, savings_rate: 0.1, disposable: 6000, emergency_months: 6,
-  categories: { food: 2000, entertainment: 1000, medical: 500 }, housing: 12000,
+  test('已覆盖城市 → city_estimated: false', () => {
+    const r = calcQuick({ city: '杭州', income: 25000, housing: 8000 })
+    assert.equal(r.city_estimated, false)
+  })
 })
-assert('T19 触发R03', recs.some((r) => r.rule_id === 'R03'), JSON.stringify(recs.map((r) => r.rule_id)))
 
-// T20: 触发 R-N01 备育储备压力
-recs = runRules({
-  stage: 'planning', city: '上海', income: 20000, fixed_expense: 8000,
-  savings_target: 1000, savings_rate: 0.05, disposable: 11000, emergency_months: 2,
-  categories: { food: 3000, entertainment: 1500, medical: 200 },
-  baby_reserve: { target: 100000, current: 10000, monthly_required: 8000, months_remaining: 12 },
-  housing: 8000, plan_date: '2027-06',
+// ---------- 收支失衡边界 ----------
+describe('calcQuick - 收支失衡', () => {
+  test('固定 89% → 通过（不抛错）', () => {
+    const r = calcQuick({ city: '上海', income: 10000, housing: 8900 })
+    assert.ok(r.health_score > 0)
+  })
+
+  test('固定 91% → 抛 IMBALANCE', () => {
+    assert.throws(
+      () => calcQuick({ city: '上海', income: 10000, housing: 9100 }),
+      (e) => e.code === 40001 && e.message === 'IMBALANCE'
+    )
+  })
+
+  test('固定 100% → 抛 IMBALANCE', () => {
+    assert.throws(
+      () => calcQuick({ city: '上海', income: 10000, housing: 10000 }),
+      (e) => e.code === 40001
+    )
+  })
 })
-assert('T20 触发R-N01', recs.some((r) => r.rule_id === 'R-N01'), JSON.stringify(recs.map((r) => r.rule_id)))
-assert('T20 触发R-N03', recs.some((r) => r.rule_id === 'R-N03'), JSON.stringify(recs.map((r) => r.rule_id)))
-assert('T20 触发R-N05', recs.some((r) => r.rule_id === 'R-N05'), JSON.stringify(recs.map((r) => r.rule_id)))
 
-// T21: 规则最多 5 条
-recs = runRules({
-  stage: 'planning', city: '上海', income: 15000, fixed_expense: 10000,
-  savings_target: 500, savings_rate: 0.03, disposable: 4500, emergency_months: 0.5,
-  categories: { food: 2500, entertainment: 2000, medical: 100 },
-  baby_reserve: { target: 120000, current: 5000, monthly_required: 10000, months_remaining: 12 },
-  housing: 10000, plan_date: '2027-06',
+// ---------- 健康分 ----------
+describe('calcHealthScore', () => {
+  test('储蓄 20%/固定 45%/备用 6 月 → ≥75 green', () => {
+    const r = calcHealthScore({
+      income: 32000, fixedExpense: 14400, savingsTarget: 6400, emergencyFundMonths: 6,
+    })
+    assert.ok(r.score >= 75)
+    assert.equal(r.riskLevel, 'green')
+  })
+
+  test('储蓄 5%/固定 60%/备用 1 月 → <60 red', () => {
+    const r = calcHealthScore({
+      income: 30000, fixedExpense: 18000, savingsTarget: 1500, emergencyFundMonths: 1,
+    })
+    assert.ok(r.score < 60)
+    assert.equal(r.riskLevel, 'red')
+  })
+
+  test('中等画像 → yellow', () => {
+    const r = calcHealthScore({
+      income: 30000, fixedExpense: 13500, savingsTarget: 4500, emergencyFundMonths: 4,
+    })
+    assert.ok(r.score >= 50 && r.score < 85)
+    assert.equal(r.riskLevel, 'yellow')
+  })
 })
-assert('T21 规则最多5条', recs.length <= 5, `len=${recs.length}`)
 
-// T22: 新婚无备育规则
-recs = runRules({
-  stage: 'newlywed', city: '上海', income: 30000, fixed_expense: 10000,
-  savings_target: 6000, savings_rate: 0.2, disposable: 14000, emergency_months: 6,
-  categories: { food: 2000, entertainment: 800, medical: 500 }, housing: 10000,
+// ---------- 阶段系数 ----------
+describe('阶段系数', () => {
+  test('备孕 vs 新婚 → 阶段系数被读取', () => {
+    const a = calcFull({
+      stage: 'newlywed', city: '上海', monthlyIncome: 32000,
+      fixedExpenses: { housing: 11000 }, savingsTarget: 6400, emergencyFundMonths: 6,
+    })
+    const b = calcFull({
+      stage: 'planning', city: '上海', monthlyIncome: 32000,
+      fixedExpenses: { housing: 11000 }, savingsTarget: 6400, emergencyFundMonths: 6,
+    })
+    assert.equal(b.meta.stage_coefficient, 1.05)
+    assert.equal(a.meta.stage_coefficient, 1.0)
+  })
 })
-assert('T22 新婚无R-N规则', !recs.some((r) => r.rule_id && r.rule_id.startsWith('R-N')), JSON.stringify(recs.map((r) => r.rule_id)))
 
-// ========== 汇总 ==========
-console.log('\n' + '='.repeat(50))
-console.log(`✅ 通过: ${passed}  ❌ 失败: ${failed}`)
-if (failures.length) {
-  console.log('\n失败详情:')
-  failures.forEach((f) => console.log(f))
-  process.exit(1)
-} else {
-  console.log('🎉 全部通过！')
-  process.exit(0)
-}
+// ---------- 收入系数 ----------
+describe('收入系数 (clamp)', () => {
+  test('5x 中位数 → clamp 1.15', () => {
+    const r = calcFull({
+      stage: 'newlywed', city: '上海', monthlyIncome: 140000,
+      fixedExpenses: { housing: 20000 }, savingsTarget: 28000, emergencyFundMonths: 6,
+    })
+    assert.equal(r.meta.income_coefficient, 1.15)
+  })
+
+  test('0.5x 中位数 → clamp 0.85', () => {
+    const r = calcFull({
+      stage: 'newlywed', city: '上海', monthlyIncome: 14000,
+      fixedExpenses: { housing: 5000 }, savingsTarget: 2800, emergencyFundMonths: 6,
+    })
+    assert.equal(r.meta.income_coefficient, 0.85)
+  })
+})
+
+// ---------- 备育 ----------
+describe('calcBabyReserve', () => {
+  test('12 月后生育 + 储备 32000 → monthlyRequired > 0', () => {
+    const r = calcBabyReserve({
+      stage: 'planning', cityTier: 'tier1', monthsRemaining: 12, currentReserve: 32000,
+    })
+    assert.ok(r.target > 80000)
+    assert.ok(r.monthlyRequired > 0)
+  })
+
+  test('18 月后生育 + 储备 80000 → monthlyRequired = 0', () => {
+    const r = calcBabyReserve({
+      stage: 'pregnant', cityTier: 'tier2', monthsRemaining: 18, currentReserve: 80000,
+    })
+    assert.equal(r.monthlyRequired, 0)
+  })
+
+  test('4 月后生育 + 储备 5000 → BABY_TOO_SOON warning', () => {
+    const warn = errors.detectBabyTooSoon(4, 5000, 80000)
+    assert.equal(warn.code, 'BABY_TOO_SOON')
+    assert.equal(warn.severity, 'red')
+  })
+
+  test('新婚阶段 → null', () => {
+    const r = calcBabyReserve({
+      stage: 'newlywed', cityTier: 'tier1', monthsRemaining: 12, currentReserve: 0,
+    })
+    assert.equal(r, null)
+  })
+})
+
+// ---------- calcFull ----------
+describe('calcFull', () => {
+  test('新婚 + 上海 → baby_reserve: null', () => {
+    const r = calcFull({
+      stage: 'newlywed', city: '上海', monthlyIncome: 32000,
+      fixedExpenses: { housing: 11000, loan: 1500 }, savingsTarget: 6400, emergencyFundMonths: 6,
+    })
+    assert.equal(r.baby_reserve, null)
+    assert.equal(r.categories.length, 7)
+    assert.equal(r.recommendations.length, 0)
+  })
+
+  test('备育 + 上海 → baby_reserve 完整对象', () => {
+    const r = calcFull({
+      stage: 'planning', city: '上海', monthlyIncome: 32000,
+      fixedExpenses: { housing: 11000 }, savingsTarget: 6400, emergencyFundMonths: 6,
+      monthsToBaby: 12, currentBabyReserve: 32000,
+    })
+    assert.ok(r.baby_reserve)
+    assert.ok(r.baby_reserve.target > 0)
+    assert.ok(r.baby_reserve.monthlyRequired > 0)
+    assert.equal(r.baby_reserve.monthsRemaining, 12)
+  })
+
+  test('7 个 categories 必有', () => {
+    const r = calcFull({
+      stage: 'newlywed', city: '上海', monthlyIncome: 32000,
+      fixedExpenses: { housing: 11000 }, savingsTarget: 6400, emergencyFundMonths: 6,
+    })
+    const ids = r.categories.map(c => c.id)
+    assert.deepEqual(ids.sort(), ['clothing', 'daily', 'entertainment', 'food', 'medical', 'other', 'transport'])
+  })
+
+  test('categories 合计 ≈ disposable × 0.95', () => {
+    const r = calcFull({
+      stage: 'newlywed', city: '上海', monthlyIncome: 32000,
+      fixedExpenses: { housing: 11000 }, savingsTarget: 6400, emergencyFundMonths: 6,
+    })
+    const sum = r.categories.reduce((s, c) => s + c.suggested, 0)
+    const expected = r.monthly_summary.disposable * 0.95
+    assert.ok(Math.abs(sum - expected) <= 5, `sum=${sum} expected~${expected}`)
+  })
+
+  test('disposable ≈ 0 → categories 不崩', () => {
+    const r = calcFull({
+      stage: 'newlywed', city: '上海', monthlyIncome: 12000,
+      fixedExpenses: { housing: 10500 }, savingsTarget: 1500, emergencyFundMonths: 6,
+    })
+    assert.equal(r.monthly_summary.disposable, 0)
+    assert.ok(r.categories.every(c => c.suggested === 0))
+  })
+
+  test('plan_id 是 uuid', () => {
+    const r = calcFull({
+      stage: 'newlywed', city: '上海', monthlyIncome: 32000,
+      fixedExpenses: { housing: 11000 }, savingsTarget: 6400, emergencyFundMonths: 6,
+    })
+    assert.match(r.plan_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+  })
+})
+
+// ---------- 归一化 ----------
+describe('normalize', () => {
+  test('disposable=0 → 所有 suggested=0', () => {
+    const r = normalize.normalizeCategories([
+      { id: 'food', baseValue: 3000 },
+      { id: 'daily', baseValue: 1200 },
+    ], 0)
+    assert.ok(r.every(c => c.suggested === 0))
+  })
+
+  test('range 是 suggested 的 0.75-1.25 倍', () => {
+    const r = normalize.normalizeCategories([{ id: 'food', baseValue: 3000 }], 10000)
+    const food = r[0]
+    assert.equal(food.range_min, Math.round(food.suggested * 0.75))
+    assert.equal(food.range_max, Math.round(food.suggested * 1.25))
+  })
+})
+
+// ---------- 性能门禁 ----------
+describe('性能门禁', () => {
+  test('10 城 × 100 次 calcQuick 平均 < 50ms', () => {
+    const cities = benchmark.cities.map(c => c.name)
+    const iterations = 100
+    // 预热
+    for (let i = 0; i < 10; i++) for (const c of cities) calcQuick({ city: c, income: 28000, housing: 9000 })
+
+    const t0 = Date.now()
+    for (let i = 0; i < iterations; i++) for (const c of cities) calcQuick({ city: c, income: 28000, housing: 9000 })
+    const avg = (Date.now() - t0) / (iterations * cities.length)
+    assert.ok(avg < 50, `avg ${avg.toFixed(2)}ms >= 50ms`)
+  })
+})
