@@ -4,6 +4,9 @@ import ScoreRing from '@/components/ScoreRing.vue'
 import NavBar from '@/components/NavBar.vue'
 import engineClient from '@/utils/engineClient.js'
 
+const city = ref('')
+const income = ref(0)
+const housing = ref(0)
 const score = ref(0)
 const riskLevel = ref('green')
 const rangeMin = ref(0)
@@ -13,18 +16,23 @@ const cityEstimated = ref(false)
 const loading = ref(true)
 const errorMsg = ref('')
 
-onMounted(async () => {
-  // 从 URL query 读取（step3 → result 时附带），缺失则用 PDD 晓雯画像默认
+function getQuery(name) {
   const pages = getCurrentPages()
   const current = pages[pages.length - 1]
-  const opts = (current && current.options) || {}
-  const city = opts.city || '上海'
-  const income = Number(opts.income) || 32000
-  const housing = Number(opts.housing) || 11000
+  return (current && current.options && current.options[name]) || ''
+}
+
+onMounted(async () => {
+  city.value = getQuery('city') || '上海'
+  income.value = Number(getQuery('income')) || 32000
+  housing.value = Number(getQuery('housing')) || 11000
 
   try {
-    // 探针版：envClient 在非 MP 环境直接 require 引擎；MP 环境会抛错（Phase 2 接 wx.cloud）
-    const r = await engineClient.callCalcQuick({ city, income, housing })
+    const r = await engineClient.callCalcQuick({
+      city: city.value,
+      income: income.value,
+      housing: housing.value,
+    })
     score.value = r.health_score
     riskLevel.value = r.risk_level
     rangeMin.value = r.disposable_range[0]
@@ -32,7 +40,12 @@ onMounted(async () => {
     tip.value = r.top_recommendation
     cityEstimated.value = r.city_estimated
   } catch (e) {
-    errorMsg.value = e.message || '测算失败，请稍后再试'
+    if (e.code === 40001) {
+      // IMBALANCE
+      uni.redirectTo({ url: '/pages/error/imbalance' })
+      return
+    }
+    errorMsg.value = e.userHint || e.message || '测算失败，请稍后再试'
   } finally {
     loading.value = false
   }
@@ -49,6 +62,12 @@ function statusLabel(level) {
 function onLogin() {
   uni.showToast({ title: '待接入登录', icon: 'none' })
 }
+
+function onRetry() {
+  loading.value = true
+  errorMsg.value = ''
+  onMounted()
+}
 </script>
 
 <template>
@@ -62,6 +81,7 @@ function onLogin() {
 
       <template v-else-if="errorMsg">
         <text class="error-text">{{ errorMsg }}</text>
+        <button class="grad-btn" @tap="onRetry">重试</button>
       </template>
 
       <template v-else>
