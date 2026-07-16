@@ -3,6 +3,9 @@ import { ref, onMounted } from 'vue'
 import ScoreRing from '@/components/ScoreRing.vue'
 import NavBar from '@/components/NavBar.vue'
 import engineClient from '@/utils/engineClient.js'
+import { useWizardStore } from '@/stores/wizard'
+
+const wizard = useWizardStore()
 
 const city = ref('')
 const income = ref(0)
@@ -60,7 +63,13 @@ function statusLabel(level) {
 }
 
 function onLogin() {
-  uni.showToast({ title: '待接入登录', icon: 'none' })
+  // 预填 wizardStore（quick 结果带入完整向导）
+  wizard.loadFromQuick({
+    city: city.value,
+    income: income.value,
+    housing: housing.value,
+  })
+  uni.navigateTo({ url: '/subpackages/wizard/step1' })
 }
 
 function onRetry() {
@@ -106,7 +115,7 @@ function onRetry() {
         </view>
 
         <button class="grad-btn" @tap="onLogin">
-          登录看完整规划书
+          看完整规划书
         </button>
       </template>
     </view>
