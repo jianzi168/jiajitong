@@ -1,19 +1,37 @@
 <script setup>
-import NavBar from '@/components/NavBar.vue'
 import { ref } from 'vue'
+import NavBar from '@/components/NavBar.vue'
 
-const income = ref('32,000')
+function getQuery(name) {
+  const pages = getCurrentPages()
+  const current = pages[pages.length - 1]
+  return (current && current.options && current.options[name]) || ''
+}
+
+const city = getQuery('city') || '上海'
+const income = ref(32000)
 
 function onIncomeInput(e) {
-  income.value = e.detail.value
+  const v = String(e.detail.value).replace(/[^\d]/g, '')
+  income.value = Number(v) || 0
 }
 
 function onSliderChange(e) {
-  income.value = Number(e.detail.value).toLocaleString('en-US')
+  income.value = Number(e.detail.value)
+}
+
+function format(n) {
+  return Number(n || 0).toLocaleString('en-US')
 }
 
 function onNext() {
-  uni.navigateTo({ url: '/pages/quick/step3' })
+  if (income.value < 1000) {
+    uni.showToast({ title: '收入至少 ¥1,000', icon: 'none' })
+    return
+  }
+  uni.navigateTo({
+    url: `/pages/quick/step3?city=${encodeURIComponent(city)}&income=${income.value}`,
+  })
 }
 </script>
 
@@ -31,15 +49,20 @@ function onNext() {
       <text class="field-heading">家庭月收入（税后）</text>
       <view class="field-block money-field">
         <text>¥</text>
-        <input class="field-input" type="text" :value="income" @input="onIncomeInput" />
+        <input
+          class="field-input"
+          type="number"
+          :value="format(income)"
+          @input="onIncomeInput"
+        />
       </view>
 
       <text class="hint-text">拖一拖滑块也能快速改</text>
       <slider
         class="slider-field"
-        :value="32000"
-        min="10000"
-        max="80000"
+        :value="income"
+        min="5000"
+        max="100000"
         :step="1000"
         activeColor="#FF6B8A"
         backgroundColor="rgba(28, 25, 23, 0.1)"
