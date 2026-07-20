@@ -49,11 +49,7 @@ function onNext() {
 
 <template>
   <view class="screen">
-    <NavBar title="家庭财务规划">
-      <template #right>
-        <text class="step-label">3/5</text>
-      </template>
-    </NavBar>
+    <NavBar title="家庭财务规划" rightText="3/5" />
 
     <view class="wizard-track">
       <view class="seg done"></view>

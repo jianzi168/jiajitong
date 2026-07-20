@@ -1,7 +1,8 @@
 <script setup>
 defineProps({
   title: { type: String, default: '' },
-  showBack: { type: Boolean, default: true }
+  showBack: { type: Boolean, default: true },
+  rightText: { type: String, default: '' },
 })
 defineEmits(['back'])
 defineExpose({})
@@ -22,8 +23,8 @@ function onBack() {
         <text class="back-arrow">‹</text>
       </button>
       <text class="navbar-title">{{ title }}</text>
-      <view v-if="$slots.right" class="navbar-right">
-        <slot name="right" />
+      <view v-if="rightText" class="navbar-right">
+        <text class="step-label">{{ rightText }}</text>
       </view>
     </view>
   </view>

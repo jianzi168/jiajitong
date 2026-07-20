@@ -39,11 +39,7 @@ function onGenerate() {
 
 <template>
   <view class="screen">
-    <NavBar title="确认信息">
-      <template #right>
-        <text class="step-label">5/5</text>
-      </template>
-    </NavBar>
+    <NavBar title="确认信息" rightText="5/5" />
 
     <view class="wizard-track">
       <view class="seg done"></view>
