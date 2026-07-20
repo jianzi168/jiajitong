@@ -29,7 +29,8 @@ function onInput(key, e) {
   const v = String(e.detail.value).replace(/[^\d]/g, '')
   if (key === 'savings') wizard.setSavingsTarget(v)
   else if (key === 'emergency') wizard.setEmergencyFund(v)
-  else if (key === 'baby') wizard.setBaby({ currentBabyReserve: v })
+  else if (key === 'monthsToBaby') wizard.setBaby({ monthsToBaby: v || null })
+  else if (key === 'currentBabyReserve') wizard.setBaby({ currentBabyReserve: v })
 }
 function onSavingsSlider(e) {
   wizard.setSavingsTarget(e.detail.value)
@@ -110,7 +111,7 @@ function onNext() {
             type="number"
             :value="monthsToBaby || ''"
             placeholder="例如 12"
-            @input="onInput('baby', $event)"
+            @input="onInput('monthsToBaby', $event)"
           />
           <text>个月</text>
         </view>
@@ -133,7 +134,7 @@ function onNext() {
           <input
             type="number"
             :value="format(wizard.currentBabyReserve)"
-            @input="onInput('baby', $event)"
+            @input="onInput('currentBabyReserve', $event)"
           />
         </view>
       </template>
