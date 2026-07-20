@@ -5,7 +5,8 @@ import NavBar from '@/components/NavBar.vue'
 function getQuery(name) {
   const pages = getCurrentPages()
   const current = pages[pages.length - 1]
-  return (current && current.options && current.options[name]) || ''
+  const raw = (current && current.options && current.options[name]) || ''
+  try { return decodeURIComponent(raw) } catch (e) { return raw }
 }
 
 const city = getQuery('city') || '上海'
