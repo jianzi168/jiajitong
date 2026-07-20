@@ -10,9 +10,9 @@ const cities = ref([])
 const loading = ref(true)
 const showPicker = ref(false)
 const stabilities = [
-  { id: 'stable', label: '稳定', desc: '工资为主，没奖金' },
-  { id: 'bonus', label: '含奖金', desc: '有季度/年度奖金' },
-  { id: 'volatile', label: '一方波动', desc: '收入不太稳定' },
+  { id: 'stable', label: '稳定' },
+  { id: 'bonus', label: '含奖金' },
+  { id: 'volatile', label: '一方波动' },
 ]
 
 onMounted(async () => {
@@ -60,7 +60,11 @@ function onNext() {
 
 <template>
   <view class="screen">
-    <NavBar title="家庭财务规划" />
+    <NavBar title="家庭财务规划">
+      <template #right>
+        <text class="step-label">2/5</text>
+      </template>
+    </NavBar>
 
     <view class="wizard-track">
       <view class="seg done"></view>
@@ -114,7 +118,7 @@ function onNext() {
         @change="onSliderChange"
       />
 
-      <text class="field-heading">收入稳定性</text>
+      <text class="field-heading">收入稳不稳？</text>
       <view class="pill-group">
         <view
           v-for="s in stabilities"
@@ -123,8 +127,7 @@ function onNext() {
           :class="{ selected: wizard.incomeStability === s.id }"
           @tap="wizard.setStability(s.id)"
         >
-          <text class="pill-title">{{ s.label }}</text>
-          <text class="pill-desc">{{ s.desc }}</text>
+          <text>{{ s.label }}</text>
         </view>
       </view>
 
@@ -148,6 +151,4 @@ function onNext() {
 }
 .city-item.active { background: rgba(255,107,138,0.08); }
 .city-tier { font-size: 24rpx; color: var(--color-text-2); }
-.pill-title { display: block; font-size: 28rpx; font-weight: 600; }
-.pill-desc { display: block; font-size: 22rpx; color: var(--color-text-2); margin-top: 4rpx; }
 </style>

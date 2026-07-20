@@ -22,7 +22,11 @@ function onContinue() {
 
 <template>
   <view class="screen">
-    <NavBar title="家庭财务规划" />
+    <NavBar title="家庭财务规划">
+      <template #right>
+        <text class="step-label">3/5</text>
+      </template>
+    </NavBar>
 
     <view class="wizard-track">
       <view class="seg done"></view>
