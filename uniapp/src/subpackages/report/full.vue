@@ -1,158 +1,315 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import ScoreRing from '@/components/ScoreRing.vue'
 
-// 7 大类预算行（完整版带区间）
-const budgets = [
-  { name: '餐饮', amt: '¥3,600', range: '2,700–4,500' },
-  { name: '日用', amt: '¥1,800', range: '1,350–2,250' },
-  { name: '娱乐', amt: '¥2,000', range: '1,500–2,500' },
-  { name: '医疗', amt: '¥1,200', range: '900–1,500' },
-  { name: '服饰', amt: '¥900', range: '675–1,125' },
-  { name: '交通通讯', amt: '¥600', range: '450–750' },
-  { name: '其他', amt: '¥1,200', range: '900–1,500' }
-]
+const loading = ref(true)
+const errorMsg = ref('')
+const plan = ref(null)
+const recStatus = ref({}) // { recId: 'accepted' | 'later' | 'ignored' }
 
-// accordion 用本地 ref 控制；当前只展开"餐饮"作为示例
-const open = ref(true)
-function toggle() {
-  open.value = !open.value
-}
-
-const babyItems = [
-  { k: '首年育儿增量', v: '¥3,200/月' },
-  { k: '储备目标', v: '¥80,000' },
-  { k: '已储备', v: '¥32,000 (40%)' },
-  { k: '距计划生育', v: '18 个月' }
-]
-
-const risks = [
-  { k: '备用金', v: '3.9 个月', ok: true },
-  { k: '固定支出占比', v: '45%', ok: true },
-  { k: '储蓄率', v: '20%', ok: false }
-]
-
-const suggestions = [
-  '娱乐预算从 ¥2,000 调到 ¥1,500',
-  '开个备育专户，每月自动转 ¥3,000'
-]
-
-function go(target) {
-  const map = {
-    dashboard: '/pages/dashboard/index',
-    partner: '/pages/partner/index'
-  }
-  const url = map[target]
-  if (!url) return
-  if (target === 'dashboard') {
-    uni.reLaunch({ url })
+onMounted(() => {
+  const app = getApp()
+  plan.value = (app && app.globalData && app.globalData.fullPlanResult) || null
+  if (!plan.value) {
+    errorMsg.value = '未找到规划数据，请回到向导重新生成'
   } else {
-    uni.navigateTo({ url })
+    // 从 localStorage 读已采纳状态
+    try {
+      const saved = uni.getStorageSync('recStatus') || {}
+      recStatus.value = saved
+    } catch (e) {}
   }
+  loading.value = false
+})
+
+const riskLabel = computed(() => ({
+  green: '稳健', yellow: '关注', red: '需调整',
+}[plan.value?.risk_level] || '—'))
+
+const disposable = computed(() => plan.value?.monthly_summary?.disposable || 0)
+
+const recommendations = computed(() => plan.value?.recommendations || [])
+
+const baby = computed(() => {
+  const b = plan.value?.baby_reserve
+  if (!b) return null
+  return {
+    target: b.target,
+    current: b.current,
+    monthlyRequired: b.monthlyRequired,
+    monthsRemaining: b.monthsRemaining,
+  }
+})
+
+const riskReport = computed(() => plan.value?.risk_report || {})
+
+function fmt(n) {
+  return '¥' + Number(n || 0).toLocaleString('en-US')
+}
+function pct(n) {
+  return (n * 100).toFixed(1) + '%'
+}
+function severityClass(s) {
+  return 'sev-' + (s || 'yellow')
+}
+function pctProgress(ratio) {
+  if (!ratio || ratio >= 1) return 100
+  return Math.round(ratio * 100)
 }
 
-function onPdf() {
-  uni.showToast({ title: 'PDF 生成待接入', icon: 'none' })
+function setStatus(recId, status) {
+  recStatus.value = { ...recStatus.value, [recId]: status }
+  try { uni.setStorageSync('recStatus', recStatus.value) } catch (e) {}
+}
+function statusOf(recId) {
+  return recStatus.value[recId] || null
+}
+
+function fmtPct(num, denom) {
+  if (!denom) return 0
+  return Math.min(100, Math.round((num / denom) * 100))
 }
 </script>
 
 <template>
   <view class="screen">
-    <NavBar title="完整规划书" />
+    <NavBar title="家庭财务规划书（完整版）" />
 
-    <view class="screen-body screen-body-scroll">
-      <!-- 报告 hero：原模板在此使用 score-display-sm，但只用分数数字，未嵌入 SVG；这里用 ScoreRing 替换以保持一致 -->
-      <view class="report-hero">
-        <ScoreRing :score="82" size="sm" />
-        <view class="meta-line">
-          <text class="status-pill status-pill-ok">稳健</text>
-          <text>上海 · 备孕中</text>
-        </view>
-      </view>
+    <view class="screen-body screen-body-scroll report-body">
+      <template v-if="loading">
+        <text class="loading-text">加载中…</text>
+      </template>
+      <template v-else-if="errorMsg">
+        <text class="error-text">{{ errorMsg }}</text>
+      </template>
 
-      <text class="section-heading">月度预算（7 大类）</text>
-      <view
-        v-for="b in budgets"
-        :key="b.name"
-        class="budget-line"
-      >
-        <text>{{ b.name }}</text>
-        <text class="budget-amt">{{ b.amt }}</text>
-        <text class="budget-pct">{{ b.range }}</text>
-      </view>
-
-      <!-- accordion -->
-      <button class="accordion-trigger" @tap="toggle">
-        餐饮 计算依据 {{ open ? '▲' : '▼' }}
-      </button>
-      <view v-if="open" class="accordion-panel">
-        <text>基准 ¥2,100 × 家庭系数 1.8 × 城市系数 1.35 = ¥5,103 → 归一 ¥3,600</text>
-        <text class="hint-text">数据来源：城镇消费支出统计 2025Q1</text>
-      </view>
-
-      <!-- 备育专项 -->
-      <view class="glass-card baby-panel">
-        <text class="section-heading">备育专项</text>
-        <view
-          v-for="row in babyItems"
-          :key="row.k"
-          class="kv-row"
-        >
-          <text>{{ row.k }}</text>
-          <text class="kv-val">{{ row.v }}</text>
-        </view>
-        <view class="track-bar">
-          <view class="track-fill" style="width:40%;"></view>
-        </view>
-      </view>
-
-      <text class="section-heading">抗风险报告</text>
-      <view class="glass-card risk-panel">
-        <view
-          v-for="r in risks"
-          :key="r.k"
-          class="risk-row"
-          :class="r.ok ? 'risk-row-ok' : 'risk-row-warn'"
-        >
-          <text>{{ r.k }}</text>
-          <text>
-            {{ r.v }}
-            <text
-              class="status-dot"
-              :class="r.ok ? 'status-dot-ok' : 'status-dot-warn'"
-            ></text>
+      <template v-else>
+        <!-- 1. 封面 -->
+        <view class="report-cover glass-card">
+          <ScoreRing :score="plan.health_score" size="lg" />
+          <text class="cover-caption">家庭财务健康分</text>
+          <text class="status-pill" :class="'status-pill-' + plan.risk_level">
+            {{ riskLabel }} 区间
           </text>
+          <text class="cover-meta">{{ plan.meta?.city || '' }} · {{ plan.meta?.stage || '' }}</text>
         </view>
-        <text class="hint-text">备育前建议备用金 ≥ 6 个月</text>
-      </view>
 
-      <text class="section-heading">优化建议 (5)</text>
-      <view class="glass-card action-card action-card-warn">
-        <text class="tip-strong">备育储备有点紧</text>
-        <view class="numbered-list">
-          <text
-            v-for="(s, i) in suggestions"
-            :key="i"
-            class="li"
-          >{{ s }}</text>
+        <!-- 2. 收支总览 -->
+        <view class="report-section">
+          <text class="section-title">收支总览</text>
+          <view class="kv-list">
+            <view class="kv-row"><text>月收入</text><text class="kv-val">{{ fmt(plan.monthly_summary.income) }}</text></view>
+            <view class="kv-row"><text>固定支出</text><text class="kv-val">{{ fmt(plan.monthly_summary.fixed_expense) }}</text></view>
+            <view class="kv-row"><text>储蓄目标</text><text class="kv-val">{{ fmt(plan.monthly_summary.savings_target) }}</text></view>
+            <view class="kv-row kv-row-highlight"><text>可支配</text><text class="kv-val">{{ fmt(disposable) }}</text></view>
+          </view>
         </view>
-        <text class="impact-text">预估：每月多储备 ¥800–1,200</text>
-      </view>
 
-      <button class="grad-btn" @tap="go('dashboard')">启用预算追踪</button>
-      <button class="grad-btn grad-btn-outline" @tap="go('partner')">邀请伴侣</button>
-      <button class="text-link" @tap="onPdf">导出 PDF</button>
+        <!-- 3. 完整 7 类预算 -->
+        <view class="report-section">
+          <text class="section-title">月度预算建议（7 大类）</text>
+          <view class="budget-list">
+            <view v-for="c in plan.categories" :key="c.id" class="budget-row">
+              <text class="budget-name">{{ c.name }}</text>
+              <view class="budget-val-block">
+                <text class="budget-val">{{ fmt(c.suggested) }}</text>
+                <text class="budget-range">{{ fmt(c.range_min) }} – {{ fmt(c.range_max) }}</text>
+              </view>
+              <text class="budget-pct">{{ pct(c.ratio) }}</text>
+            </view>
+            <view v-if="plan.categories[0]?.calculation_basis" class="budget-basis">
+              <text class="basis-label">计算依据</text>
+              <text class="basis-text">{{ plan.categories[0].calculation_basis }}（其余类目同理）</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 4. 备育专项 -->
+        <view v-if="baby" class="report-section">
+          <text class="section-title">备育专项</text>
+          <view class="kv-list">
+            <view class="kv-row"><text>推荐储备金</text><text class="kv-val">{{ fmt(baby.target) }}</text></view>
+            <view class="kv-row">
+              <text>当前已存</text>
+              <text class="kv-val">{{ fmt(baby.current) }}</text>
+            </view>
+            <view class="kv-row">
+              <text>储备进度</text>
+              <text class="kv-val">
+                <view class="progress-bar">
+                  <view class="progress-fill" :style="{ width: fmtPct(baby.current, baby.target) + '%' }"></view>
+                </view>
+                <text class="progress-text">{{ fmtPct(baby.current, baby.target) }}%</text>
+              </text>
+            </view>
+            <view class="kv-row kv-row-highlight">
+              <text>距生育 {{ baby.monthsRemaining }} 月</text>
+              <text class="kv-val">每月 ¥{{ baby.monthlyRequired.toLocaleString('en-US') }}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 5. 优化建议（完整） -->
+        <view v-if="recommendations.length" class="report-section">
+          <text class="section-title">优化建议 Top {{ recommendations.length }}</text>
+          <view class="rec-list">
+            <view
+              v-for="r in recommendations"
+              :key="r.id"
+              class="rec-card"
+              :class="severityClass(r.severity)"
+            >
+              <view class="rec-head">
+                <text class="rec-id">{{ r.id }}</text>
+                <text class="rec-title">{{ r.title }}</text>
+                <text v-if="statusOf(r.id)" class="rec-status">{{ statusOf(r.id) === 'accepted' ? '已采纳' : statusOf(r.id) === 'later' ? '稍后' : '已忽略' }}</text>
+              </view>
+              <text class="rec-desc">{{ r.description }}</text>
+              <view v-if="r.actions && r.actions.length" class="rec-actions">
+                <text class="actions-label">建议行动</text>
+                <view v-for="(a, i) in r.actions" :key="i" class="rec-action-item">
+                  <text class="action-num">{{ i + 1 }}.</text>
+                  <text class="action-text">{{ a }}</text>
+                </view>
+              </view>
+              <text v-if="r.estimatedImpact" class="rec-impact">预估影响：{{ r.estimatedImpact }}</text>
+              <view class="rec-buttons">
+                <button class="btn-mini btn-accept" @tap="setStatus(r.id, 'accepted')">采纳</button>
+                <button class="btn-mini btn-later" @tap="setStatus(r.id, 'later')">稍后</button>
+                <button class="btn-mini btn-ignore" @tap="setStatus(r.id, 'ignored')">忽略</button>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <!-- 6. 抗风险报告 -->
+        <view class="report-section">
+          <text class="section-title">抗风险报告</text>
+          <view class="kv-list">
+            <view class="kv-row">
+              <text>储蓄率</text>
+              <text class="kv-val">{{ pct(plan.monthly_summary.savings_target / plan.monthly_summary.income) }}</text>
+            </view>
+            <view class="kv-row">
+              <text>固定占比</text>
+              <text class="kv-val">{{ pct(plan.monthly_summary.fixed_expense / plan.monthly_summary.income) }}</text>
+            </view>
+            <view class="kv-row">
+              <text>健康分</text>
+              <text class="kv-val">{{ plan.health_score }} / 100</text>
+            </view>
+            <view v-if="riskReport.baby_too_soon" class="kv-row">
+              <text>备育预警</text>
+              <text class="kv-val kv-val-warn">{{ riskReport.baby_too_soon.message }}</text>
+            </view>
+            <view v-if="riskReport.city_estimated" class="kv-row">
+              <text>城市估算</text>
+              <text class="kv-val kv-val-warn">暂按新一线估算</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 7. 下一步 -->
+        <view class="report-section">
+          <text class="section-title">下一步行动</text>
+          <button class="grad-btn" @tap="uni.showToast({title:'待接入追踪 (Phase 7)', icon:'none'})">
+            启用预算追踪
+          </button>
+          <button class="text-link" @tap="uni.showToast({title:'邀请伴侣 (Phase 10)', icon:'none'})">
+            邀请伴侣共读
+          </button>
+          <button class="text-link" @tap="uni.showToast({title:'PDF 导出 (Phase 8)', icon:'none'})">
+            导出 PDF
+          </button>
+        </view>
+      </template>
     </view>
   </view>
 </template>
 
 <style>
-.meta-line {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12rpx;
+.report-body { padding-top: 24rpx; padding-bottom: 64rpx; }
+.report-cover {
+  padding: 40rpx 24rpx;
+  text-align: center;
+  margin-bottom: 32rpx;
 }
-.meta-line .status-pill { margin-top: 0; }
+.cover-caption { display: block; font-size: 28rpx; color: var(--color-text-2); margin-top: 16rpx; }
+.cover-meta { display: block; font-size: 24rpx; color: var(--color-text-2); margin-top: 8rpx; }
+.report-section { margin-bottom: 32rpx; }
+.section-title {
+  display: block;
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 16rpx;
+}
+.kv-list { background: rgba(255, 255, 255, 0.7); border-radius: 16rpx; padding: 8rpx 24rpx; }
+.kv-row { display: flex; justify-content: space-between; align-items: center; padding: 16rpx 0; border-bottom: 1rpx solid rgba(0,0,0,0.04); font-size: 28rpx; gap: 16rpx; }
+.kv-row:last-child { border-bottom: none; }
+.kv-row-highlight { font-weight: 700; color: #FF6B8A; }
+.kv-val { font-weight: 700; flex-shrink: 0; text-align: right; word-break: break-all; }
+.kv-val-warn { color: #c33; font-weight: 600; font-size: 24rpx; }
+.budget-list { background: rgba(255,255,255,0.7); border-radius: 16rpx; padding: 16rpx 24rpx; }
+.budget-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid rgba(0,0,0,0.04);
+  font-size: 28rpx;
+  gap: 16rpx;
+}
+.budget-row:last-of-type { border-bottom: none; }
+.budget-name { flex: 0 0 auto; }
+.budget-val-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.budget-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+.budget-range { font-size: 22rpx; color: var(--color-text-2); margin-top: 4rpx; }
+.budget-pct { flex: 0 0 auto; color: var(--color-text-2); font-size: 24rpx; min-width: 80rpx; text-align: right; }
+.budget-basis { margin-top: 12rpx; padding-top: 16rpx; border-top: 1rpx solid rgba(0,0,0,0.06); }
+.basis-label { display: block; font-size: 22rpx; color: var(--color-text-2); margin-bottom: 6rpx; }
+.basis-text { display: block; font-size: 22rpx; color: var(--color-text-3); line-height: 1.5; }
+.progress-bar { display: inline-block; width: 120rpx; height: 12rpx; background: rgba(0,0,0,0.08); border-radius: 6rpx; overflow: hidden; vertical-align: middle; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, #FF6B8A, #FFB199); }
+.progress-text { font-size: 22rpx; color: var(--color-text-2); margin-left: 8rpx; }
+.rec-list { display: flex; flex-direction: column; gap: 16rpx; }
+.rec-card {
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 16rpx;
+  padding: 24rpx;
+  border-left: 8rpx solid #ccc;
+}
+.rec-card.sev-red { border-left-color: #c33; }
+.rec-card.sev-yellow { border-left-color: #F0B400; }
+.rec-card.sev-green { border-left-color: #4CAF50; }
+.rec-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12rpx;
+  gap: 8rpx;
+}
+.rec-id { font-size: 22rpx; padding: 2rpx 10rpx; border-radius: 4rpx; background: rgba(0,0,0,0.06); color: var(--color-text-2); flex-shrink: 0; }
+.rec-title { flex: 1; font-size: 30rpx; font-weight: 700; }
+.rec-status { font-size: 22rpx; padding: 4rpx 12rpx; border-radius: 999rpx; background: rgba(76,175,80,0.15); color: #2E7D32; flex-shrink: 0; }
+.rec-desc { display: block; font-size: 26rpx; color: var(--color-text-2); line-height: 1.6; margin-bottom: 12rpx; }
+.rec-actions { margin-top: 12rpx; }
+.actions-label { display: block; font-size: 24rpx; font-weight: 600; color: var(--color-text); margin-bottom: 8rpx; }
+.rec-action-item { display: flex; gap: 8rpx; padding: 6rpx 0; font-size: 26rpx; color: var(--color-text-2); }
+.action-num { flex-shrink: 0; font-weight: 600; color: var(--color-text); }
+.action-text { flex: 1; }
+.rec-impact { display: block; margin-top: 12rpx; padding-top: 12rpx; border-top: 1rpx dashed rgba(0,0,0,0.08); font-size: 24rpx; color: var(--color-coral, #FF6B8A); }
+.rec-buttons { display: flex; gap: 12rpx; margin-top: 16rpx; }
+.btn-mini { flex: 1; font-size: 24rpx; padding: 12rpx 0; border-radius: 8rpx; border: none; }
+.btn-accept { background: linear-gradient(135deg, #FF6B8A, #FFB199); color: #fff; }
+.btn-later { background: rgba(0,0,0,0.04); color: var(--color-text); }
+.btn-ignore { background: transparent; color: var(--color-text-2); border: 1rpx solid rgba(0,0,0,0.1); }
+.btn-mini::after { border: none; }
+.loading-text, .error-text { padding: 48rpx; text-align: center; color: var(--color-text-2); }
 </style>

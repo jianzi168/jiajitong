@@ -62,7 +62,8 @@ function pct(n) {
 }
 
 function onUnlock() {
-  uni.showToast({ title: '待接入付费（Phase 8）', icon: 'none' })
+  // Phase 5: 跳到完整版（待 Phase 8 接支付后改为付费引导）
+  uni.navigateTo({ url: '/subpackages/report/full' })
 }
 
 function onActivate() {
