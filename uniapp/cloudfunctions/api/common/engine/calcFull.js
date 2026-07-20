@@ -12,6 +12,7 @@ const calcHealthScore = require('./calcHealthScore')
 const calcBabyReserve = require('./calcBabyReserve')
 const { normalizeCategories, computeCategoryBase } = require('./normalize')
 const { STAGE_COEFFICIENTS, INCOME_COEFF_MIN, INCOME_COEFF_MAX } = require('./constants')
+const { evaluateRules } = require('./rules')
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v))
@@ -109,15 +110,13 @@ function calcFull(input) {
     if (babyWarn) riskReport.baby_too_soon = babyWarn
   }
 
-  // 10. 组装
-  return {
-    plan_id: crypto.randomUUID(),
+  // 9.5 评估规则引擎（Phase 5: R01-R07 + R-N01-N07）
+  const builtPlan = {
     health_score: score,
     risk_level: riskLevel,
     monthly_summary: monthlySummary,
     categories,
     baby_reserve: babyReserve,
-    recommendations: [], // Phase 5 接入 R01–R07 + R-N01–N07
     risk_report: riskReport,
     meta: {
       stage,
@@ -128,6 +127,27 @@ function calcFull(input) {
       income_coefficient: incomeCoeff,
       stage_coefficient: STAGE_COEFFICIENTS[stage] || 1.0,
     },
+  }
+  const recommendations = evaluateRules(builtPlan, {
+    stage,
+    monthlyIncome,
+    fixedExpenses,
+    emergencyFundMonths,
+    monthsToBaby,
+    currentBabyReserve,
+  })
+
+  // 10. 组装
+  return {
+    plan_id: crypto.randomUUID(),
+    health_score: score,
+    risk_level: riskLevel,
+    monthly_summary: monthlySummary,
+    categories,
+    baby_reserve: babyReserve,
+    recommendations,
+    risk_report: riskReport,
+    meta: builtPlan.meta,
   }
 }
 

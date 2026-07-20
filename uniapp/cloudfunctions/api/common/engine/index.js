@@ -14,6 +14,7 @@ const normalize = require('./normalize')
 const constants = require('./constants')
 const errors = require('./errors')
 const benchmark = require('../benchmark-data')
+const rules = require('./rules')
 
 // 逐个属性赋值 — 让 rollup-plugin-commonjs 能识别具名导出
 module.exports.calcQuick = calcQuick
@@ -24,6 +25,7 @@ module.exports.normalize = normalize
 module.exports.constants = constants
 module.exports.errors = errors
 module.exports.benchmark = benchmark
+module.exports.rules = rules
 
 // ESM default 兼容：import engine from '...' 时拿到整个对象
 module.exports.default = module.exports
