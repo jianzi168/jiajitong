@@ -87,27 +87,23 @@ function onGenerate() {
 </template>
 
 <style>
+.glass-card.kv-list {
+  /* 卡片内左右 padding 由 .glass-card 默认 36rpx 提供, 这里只调内部行距 */
+  padding-top: 36rpx;
+  padding-bottom: 36rpx;
+}
 .kv-section-title {
   display: block;
   font-size: 26rpx;
   color: var(--color-text-2);
+  font-weight: 600;
   margin-bottom: 12rpx;
+  padding: 0 4rpx;
 }
 .kv-row-mini {
-  padding: 14rpx 0;
+  /* 继承 .kv-row 的 padding (28rpx 32rpx) + border-bottom, 这里只缩小字号 */
   font-size: 26rpx;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16rpx;
 }
-.kv-row-mini > text:first-child {
-  flex-shrink: 0;
-}
-.kv-row-mini > .kv-val {
-  flex: 1;
-  text-align: right;
-  min-width: 0;
-}
+.kv-row-mini:last-child { border-bottom: none; }
 .hint-text-center { text-align: center; margin: 24rpx 0; }
 </style>
