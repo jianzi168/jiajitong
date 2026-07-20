@@ -236,11 +236,28 @@
 
 /* ===== 键值表 ===== */
 .kv-list { padding: 0; overflow: hidden; }
-.kv-row { display: flex; justify-content: space-between; align-items: center; padding: 28rpx 32rpx; border-bottom: 1rpx solid var(--color-border); font-size: 28rpx; }
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 28rpx 32rpx;
+  border-bottom: 1rpx solid var(--color-border);
+  font-size: 28rpx;
+  gap: 16rpx;
+}
 .kv-row:last-child { border-bottom: none; }
 .kv-row-highlight { background: linear-gradient(90deg, rgba(255,107,138,0.1), transparent); }
 .kv-row-highlight .kv-val { color: var(--color-coral); }
-.kv-val { font-weight: 700; }
+.kv-val {
+  font-weight: 700;
+  flex-shrink: 0;
+  text-align: right;
+  word-break: break-all;
+}
+.kv-row > text:first-child {
+  flex: 1;
+  min-width: 0;
+}
 
 /* ===== loading ===== */
 .loading-screen { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 64rpx; }

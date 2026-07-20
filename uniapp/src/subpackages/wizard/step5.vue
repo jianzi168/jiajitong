@@ -93,6 +93,21 @@ function onGenerate() {
   color: var(--color-text-2);
   margin-bottom: 12rpx;
 }
-.kv-row-mini { padding: 12rpx 0; font-size: 26rpx; }
+.kv-row-mini {
+  padding: 14rpx 0;
+  font-size: 26rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+}
+.kv-row-mini > text:first-child {
+  flex-shrink: 0;
+}
+.kv-row-mini > .kv-val {
+  flex: 1;
+  text-align: right;
+  min-width: 0;
+}
 .hint-text-center { text-align: center; margin: 24rpx 0; }
 </style>
