@@ -70,6 +70,13 @@ function fmtPct(num, denom) {
   if (!denom) return 0
   return Math.min(100, Math.round((num / denom) * 100))
 }
+
+function stubTap(title) {
+  uni.showToast({ title, icon: 'none' })
+}
+function onActivate() { stubTap('待接入追踪 (Phase 7)') }
+function onInvite() { stubTap('邀请伴侣 (Phase 10)') }
+function onExportPdf() { stubTap('PDF 导出 (Phase 8)') }
 </script>
 
 <template>
@@ -213,13 +220,13 @@ function fmtPct(num, denom) {
         <!-- 7. 下一步 -->
         <view class="report-section">
           <text class="section-title">下一步行动</text>
-          <button class="grad-btn" @tap="uni.showToast({title:'待接入追踪 (Phase 7)', icon:'none'})">
+          <button class="grad-btn" @tap="onActivate">
             启用预算追踪
           </button>
-          <button class="text-link" @tap="uni.showToast({title:'邀请伴侣 (Phase 10)', icon:'none'})">
+          <button class="text-link" @tap="onInvite">
             邀请伴侣共读
           </button>
-          <button class="text-link" @tap="uni.showToast({title:'PDF 导出 (Phase 8)', icon:'none'})">
+          <button class="text-link" @tap="onExportPdf">
             导出 PDF
           </button>
         </view>
