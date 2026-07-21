@@ -17,18 +17,35 @@ function advance() {
 }
 
 async function start() {
-  // 立即开始动画（视觉）
-  setTimeout(advance, 300)
+  setTimeout(advance, 300) // 视觉动画
 
-  // 并行调 calc.full
   try {
-    const result = await engineClient.callCalcFull(wizard.payload)
-    // 存结果到全局，供 preview 读
-    getApp().globalData.fullPlanResult = result
-    // 跳到 report preview
+    // 1. 调 calc.full 算方案
+    const planOutput = await engineClient.callCalcFull(wizard.payload)
+
+    // 2. Phase 6: 自动 bootstrap + save (云函数自动用 ctx.openid)
+    let activePlan = null
+    try {
+      const profile = await engineClient.callWxLogin({})
+      uni.setStorageSync('openid', profile.user?._openid || '')
+      uni.setStorageSync('family_id', profile.family_id || '')
+      const saved = await engineClient.callPlanSave({
+        planInput: wizard.payload,
+        planOutput,
+      })
+      activePlan = saved.plan
+    } catch (e) {
+      console.warn('[loading] save failed, fallback to globalData:', e)
+      // 失败不影响主流程, 仅展示
+    }
+
+    // 3. 持久化到 globalData 给 preview 读
+    const dataForPreview = activePlan || { ...planOutput, is_active: true }
+    getApp().globalData.fullPlanResult = dataForPreview
+
     setTimeout(() => {
       uni.redirectTo({ url: '/subpackages/report/preview' })
-    }, 1800) // 给动画一点缓冲
+    }, 1800)
   } catch (e) {
     errorMsg.value = e.userHint || e.message || '生成失败'
     setTimeout(() => {

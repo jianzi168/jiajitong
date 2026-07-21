@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import ScoreRing from '@/components/ScoreRing.vue'
 import NavBar from '@/components/NavBar.vue'
+import engineClient from '@/utils/engineClient'
 
 const loading = ref(true)
 const errorMsg = ref('')
@@ -11,7 +12,19 @@ const plan = ref(null)
 const FREE_VISIBLE_CATEGORIES = 2
 const FREE_VISIBLE_RECOMMENDATIONS = 1
 
-onMounted(() => {
+onMounted(async () => {
+  // 优先从云端 plan.getActive 拉 (Phase 6)
+  try {
+    const r = await engineClient.callPlanGetActive()
+    if (r && r.plan) {
+      plan.value = r.plan
+      loading.value = false
+      return
+    }
+  } catch (e) {
+    console.warn('[preview] cloud getActive failed:', e)
+  }
+  // fallback: 从 globalData 读 (Phase 5 行为)
   const app = getApp()
   plan.value = (app && app.globalData && app.globalData.fullPlanResult) || null
   if (!plan.value) {
