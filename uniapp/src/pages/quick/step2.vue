@@ -30,7 +30,7 @@ function onNext() {
     uni.showToast({ title: '收入至少 ¥1,000', icon: 'none' })
     return
   }
-  uni.navigateTo({
+  uni.redirectTo({
     url: `/pages/quick/step3?city=${encodeURIComponent(city)}&income=${income.value}`,
   })
 }

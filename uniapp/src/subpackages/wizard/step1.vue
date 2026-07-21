@@ -35,7 +35,7 @@ function onNext() {
     uni.showToast({ title: '请先选择一个阶段', icon: 'none' })
     return
   }
-  uni.navigateTo({ url: '/subpackages/wizard/step2' })
+  uni.redirectTo({ url: '/subpackages/wizard/step2' })
 }
 </script>
 

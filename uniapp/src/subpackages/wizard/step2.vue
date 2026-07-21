@@ -54,7 +54,7 @@ function onNext() {
     uni.showToast({ title: '收入至少 ¥1,000', icon: 'none' })
     return
   }
-  uni.navigateTo({ url: '/subpackages/wizard/step3' })
+  uni.redirectTo({ url: '/subpackages/wizard/step3' })
 }
 </script>
 

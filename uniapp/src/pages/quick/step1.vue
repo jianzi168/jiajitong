@@ -28,13 +28,13 @@ function pickCity(name) {
 
 function onNext() {
   if (!selectedCity.value) return
-  uni.navigateTo({
+  uni.redirectTo({
     url: `/pages/quick/step2?city=${encodeURIComponent(selectedCity.value)}`,
   })
 }
 
 function onCityNotCovered() {
-  uni.navigateTo({ url: '/pages/error/city' })
+  uni.redirectTo({ url: '/pages/error/city' })
 }
 </script>
 

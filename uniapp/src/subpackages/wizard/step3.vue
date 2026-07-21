@@ -36,14 +36,14 @@ function onNext() {
     return
   }
   if (wizard.isImbalance) {
-    uni.navigateTo({ url: '/pages/error/imbalance' })
+    uni.redirectTo({ url: '/pages/error/imbalance' })
     return
   }
   if (fixedRatio.value >= 0.5) {
-    uni.navigateTo({ url: '/subpackages/wizard/step3-warn' })
+    uni.redirectTo({ url: '/subpackages/wizard/step3-warn' })
     return
   }
-  uni.navigateTo({ url: '/subpackages/wizard/step4' })
+  uni.redirectTo({ url: '/subpackages/wizard/step4' })
 }
 </script>
 

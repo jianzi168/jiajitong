@@ -16,7 +16,7 @@ function onBack() {
   uni.navigateBack({ delta: 1 })
 }
 function onContinue() {
-  uni.navigateTo({ url: '/subpackages/wizard/step4' })
+  uni.redirectTo({ url: '/subpackages/wizard/step4' })
 }
 </script>
 

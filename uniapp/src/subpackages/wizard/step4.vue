@@ -47,7 +47,7 @@ function onNext() {
     uni.showToast({ title: '请填写距生育月数', icon: 'none' })
     return
   }
-  uni.navigateTo({ url: '/subpackages/wizard/step5' })
+  uni.redirectTo({ url: '/subpackages/wizard/step5' })
 }
 </script>
 

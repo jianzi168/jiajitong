@@ -35,10 +35,10 @@ const fixedRatioDanger = computed(() => fixedRatio.value >= 90)
 
 function onSeeResult() {
   if (fixedRatioDanger.value) {
-    uni.navigateTo({ url: '/pages/error/imbalance' })
+    uni.redirectTo({ url: '/pages/error/imbalance' })
     return
   }
-  uni.navigateTo({
+  uni.redirectTo({
     url: `/pages/quick/result?city=${encodeURIComponent(city)}&income=${income}&housing=${housing.value}`,
   })
 }

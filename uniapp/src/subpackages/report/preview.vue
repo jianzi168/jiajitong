@@ -76,7 +76,7 @@ function pct(n) {
 
 function onUnlock() {
   // Phase 5: 跳到完整版（待 Phase 8 接支付后改为付费引导）
-  uni.navigateTo({ url: '/subpackages/report/full' })
+  uni.redirectTo({ url: '/subpackages/report/full' })
 }
 
 function onActivate() {
