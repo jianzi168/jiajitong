@@ -74,6 +74,7 @@ function onLogin() {
     income: income.value,
     housing: housing.value,
   })
+  // 跳 wizard (Phase 6: wizard step5 loading 会自动调 user.bootstrap 保存到云端)
   uni.navigateTo({ url: '/subpackages/wizard/step1' })
 }
 

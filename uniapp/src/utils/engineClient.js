@@ -68,9 +68,33 @@ export async function callCitiesList() {
   return callCloud('cities.list', {})
 }
 
+/**
+ * 微信登录：调 user.bootstrap 拿 user + family
+ */
+export async function callWxLogin(payload = {}) {
+  return callCloud('user.bootstrap', payload)
+}
+
+/**
+ * 保存方案
+ */
+export async function callPlanSave(payload = {}) {
+  return callCloud('plans.save', payload)
+}
+
+/**
+ * 当前活跃方案
+ */
+export async function callPlanGetActive() {
+  return callCloud('plans.getActive', {})
+}
+
 export default {
   callCalcQuick,
   callCalcFull,
   callCitiesList,
+  callWxLogin,
+  callPlanSave,
+  callPlanGetActive,
   isMiniProgram,
 }
