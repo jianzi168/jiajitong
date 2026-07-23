@@ -23,7 +23,7 @@ async function main() {
   cloud.init({ env: envId })
   const db = cloud.database()
 
-  const collections = ['users', 'families', 'financial_profiles', 'budget_plans']
+  const collections = ['users', 'families', 'financial_profiles', 'budget_plans', 'weekly_entries']
 
   console.log('=== 1. 创建集合 ===')
   for (const name of collections) {
@@ -48,6 +48,10 @@ async function main() {
   await safeCreateIndex(db, 'budget_plans', 'family_active', { family_id: 1, is_active: 1 })
   // budget_plans.(family_id, created_at) 降序
   await safeCreateIndex(db, 'budget_plans', 'family_created', { family_id: 1, created_at: -1 })
+  // weekly_entries.(family_id, week_start) 唯一 —— 同周 upsert 覆盖防重复 (T7-2)
+  await safeCreateIndex(db, 'weekly_entries', 'family_week_start', { family_id: 1, week_start: 1 }, { unique: true })
+  // weekly_entries.family_id 单键, 用于月内聚合
+  await safeCreateIndex(db, 'weekly_entries', 'family_id', { family_id: 1 })
 
   console.log('\n✅ 初始化完成')
   process.exit(0)
@@ -55,7 +59,8 @@ async function main() {
 
 async function safeCreateIndex(db, coll, name, key, opts = {}) {
   try {
-    await db.collection(coll).createIndex(key, name)
+    // wx-server-sdk createIndex 签名: createIndex(keys, options), options.name + options.unique
+    await db.collection(coll).createIndex(key, { name, ...opts })
     console.log(`  ✓ ${coll}.${name}${opts.unique ? ' (unique)' : ''}`)
   } catch (e) {
     const msg = e.errMsg || e.message || ''
