@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onShow } from 'vue'
+import { computed } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import FloatNav from '@/components/FloatNav.vue'
 import { usePlanStore } from '@/stores/plan'
 

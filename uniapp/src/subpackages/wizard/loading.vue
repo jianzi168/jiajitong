@@ -35,8 +35,13 @@ async function start() {
       })
       activePlan = saved.plan
     } catch (e) {
-      console.warn('[loading] save failed, fallback to globalData:', e)
-      // 失败不影响主流程, 仅展示
+      // 保存失败时报告页仍可展示；启用追踪时会再尝试 save
+      console.warn('[loading] save failed, fallback to globalData:', e?.message || e, e?.userHint || '')
+      uni.showToast({
+        title: e?.userHint || '方案未存云端，稍后启用时可重试',
+        icon: 'none',
+        duration: 2500,
+      })
     }
 
     // 3. 持久化到 globalData 给 preview 读

@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onShow } from 'vue'
+import { ref, computed } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import FloatNav from '@/components/FloatNav.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
 import { usePlanStore } from '@/stores/plan'
@@ -14,6 +15,7 @@ const monthLabel = computed(() => {
 })
 
 const activated = computed(() => store.activated)
+const hasPlan = computed(() => store.hasPlan)
 const loading = computed(() => store.loading)
 const dashboard = computed(() => store.dashboard || {})
 const categories = computed(() => dashboard.value.categories || [])
@@ -24,7 +26,7 @@ onShow(async () => {
   try {
     await store.loadDashboard()
   } catch (e) {
-    uni.showToast({ title: e.message || '加载失败', icon: 'none' })
+    uni.showToast({ title: e.userHint || e.message || '加载失败', icon: 'none' })
   }
 })
 
@@ -37,10 +39,13 @@ async function onActivate() {
     uni.showToast({ title: '已启用追踪', icon: 'success' })
   } catch (e) {
     uni.hideLoading()
-    uni.showToast({ title: e.message || '启用失败', icon: 'none' })
+    uni.showToast({ title: e.userHint || e.message || '启用失败', icon: 'none' })
   }
 }
 
+function onWizard() {
+  uni.navigateTo({ url: '/subpackages/wizard/step1' })
+}
 function onWeekly() {
   uni.navigateTo({ url: '/pages/weekly/index' })
 }
@@ -59,8 +64,15 @@ function onReview() {
     </view>
 
     <view class="screen-body screen-body-scroll screen-body-tab">
-      <!-- 未启用空态 -->
-      <view v-if="!loading && !activated" class="empty-wrap">
+      <!-- 无方案：不能 activate，引导去向导 -->
+      <view v-if="!loading && !hasPlan" class="empty-wrap">
+        <text class="empty-title">还没有预算方案</text>
+        <text class="empty-sub">先完成向导，生成家庭财务规划书后再启用追踪</text>
+        <button class="grad-btn" @tap="onWizard">去生成方案</button>
+      </view>
+
+      <!-- 有方案未启用 -->
+      <view v-else-if="!loading && !activated" class="empty-wrap">
         <text class="empty-title">还没有启用追踪</text>
         <text class="empty-sub">启用后这里会显示本月 7 类预算进度</text>
         <button class="grad-btn" @tap="onActivate">启用预算追踪</button>

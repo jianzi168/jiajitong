@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onLoad } from 'vue'
+import { ref, computed } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 import NavBar from '@/components/NavBar.vue'
 import { getCurrentWeekly, copyLastWeek, submitWeekly } from '@/services/api'
 

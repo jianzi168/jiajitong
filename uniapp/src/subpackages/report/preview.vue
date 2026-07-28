@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import ScoreRing from '@/components/ScoreRing.vue'
 import NavBar from '@/components/NavBar.vue'
 import engineClient from '@/utils/engineClient'
+import { ensureAndActivate } from '@/services/api'
 
 const loading = ref(true)
 const errorMsg = ref('')
@@ -80,20 +81,18 @@ function onUnlock() {
 }
 
 function onActivate() {
-  // Phase 7: 启用预算追踪 → 看板
-  import('@/services/api').then(({ activatePlan }) => {
-    uni.showLoading({ title: '启用中...' })
-    return activatePlan({})
-      .then(() => {
-        uni.hideLoading()
-        uni.showToast({ title: '已启用追踪', icon: 'success' })
-        setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 600)
-      })
-      .catch((e) => {
-        uni.hideLoading()
-        uni.showToast({ title: e.message || '启用失败', icon: 'none' })
-      })
-  })
+  // Phase 7: 启用预算追踪 → 看板（无云端 plan 时先补 save）
+  uni.showLoading({ title: '启用中...' })
+  ensureAndActivate(plan.value)
+    .then(() => {
+      uni.hideLoading()
+      uni.showToast({ title: '已启用追踪', icon: 'success' })
+      setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 600)
+    })
+    .catch((e) => {
+      uni.hideLoading()
+      uni.showToast({ title: e.userHint || e.message || '启用失败', icon: 'none' })
+    })
 }
 </script>
 
