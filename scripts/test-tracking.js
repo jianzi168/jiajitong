@@ -221,4 +221,46 @@ describe('weekly.copyLastWeek', () => {
     const data = ok(r)
     assert.equal(data.categories, null)
   })
+
+  test('有上条 → 返回上周 categories', async () => {
+    const OPENID = 't7_c2_openid'
+    await bootstrapFamily(OPENID)
+    await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
+
+    // 第一次确认空态
+    const empty = await dispatch({ action: 'weekly.copyLastWeek' }, makeCtx(OPENID))
+    assert.equal(ok(empty).categories, null)
+
+    // 注入一条"上周" entry (比本周 weekStart 早)
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    // 取 family_id: 直接调 user.bootstrap 已有逻辑 → 通过 plans.getActive 暴露
+    const act = await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID))
+    const familyId = ok(act).plan.family_id
+    assert.ok(familyId, 'setup: family_id should exist')
+
+    // 算一个 ISO 周一，再前推 7 天得到上周的 week_start
+    const monday = new Date()
+    const day = monday.getDay() || 7
+    monday.setDate(monday.getDate() - (day - 1))
+    const lastWeek = new Date(monday)
+    lastWeek.setDate(monday.getDate() - 7)
+    const lastWeekStart = lastWeek.toISOString().slice(0, 10)
+
+    const lastCats = { food: 77, daily: 88, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 }
+    handlers._seedWeeklyEntry({
+      _id: 'seed_last_week_entry',
+      family_id: familyId,
+      week_start: lastWeekStart,
+      categories: lastCats,
+      total: 165,
+      submitted_by: OPENID,
+      created_at: Date.now(),
+    })
+
+    const r = await dispatch({ action: 'weekly.copyLastWeek' }, makeCtx(OPENID))
+    const data = ok(r)
+    assert.ok(data.categories, 'expected categories from last week')
+    assert.equal(data.categories.food, 77)
+    assert.equal(data.categories.daily, 88)
+  })
 })

@@ -217,11 +217,7 @@ async function plansGetActive(ctx, payload) {
   } else {
     user = memoryStore.users.get(openid)
     if (!user) return ok({ plan: null })
-    for (const [k, v] of memoryStore.budget_plans) {
-      if (v && v.family_id === user.family_id && v.is_active) {
-        plan = v; break
-      }
-    }
+    plan = findActivePlanLocal(user.family_id)
   }
 
   return ok({ plan: plan || null })
@@ -520,5 +516,11 @@ module.exports = {
     memoryStore.financial_profiles.clear()
     memoryStore.budget_plans.clear()
     memoryStore.weekly_entries.clear()
+  },
+  _seedWeeklyEntry(entry) {
+    const id = entry._id || `seed_w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const stored = { _id: id, ...entry }
+    memoryStore.weekly_entries.set(id, stored)
+    return stored
   },
 }
