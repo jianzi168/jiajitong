@@ -80,7 +80,20 @@ function onUnlock() {
 }
 
 function onActivate() {
-  uni.showToast({ title: '待接入追踪（Phase 7）', icon: 'none' })
+  // Phase 7: 启用预算追踪 → 看板
+  import('@/services/api').then(({ activatePlan }) => {
+    uni.showLoading({ title: '启用中...' })
+    return activatePlan({})
+      .then(() => {
+        uni.hideLoading()
+        uni.showToast({ title: '已启用追踪', icon: 'success' })
+        setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 600)
+      })
+      .catch((e) => {
+        uni.hideLoading()
+        uni.showToast({ title: e.message || '启用失败', icon: 'none' })
+      })
+  })
 }
 </script>
 
