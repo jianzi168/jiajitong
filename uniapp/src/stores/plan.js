@@ -8,7 +8,7 @@
  */
 
 import { defineStore } from 'pinia'
-import { getActivePlan, activatePlan, getDashboard } from '@/services/api'
+import { getActivePlan, ensureAndActivate, getDashboard } from '@/services/api'
 
 export const usePlanStore = defineStore('plan', {
   state: () => ({
@@ -36,23 +36,24 @@ export const usePlanStore = defineStore('plan', {
         this.activated = !!(this.activePlan && this.activePlan.activated_at)
         return this.activePlan
       } catch (e) {
-        this.error = e.message || String(e)
+        this.error = e.userHint || e.message || String(e)
         throw e
       } finally {
         this.loading = false
       }
     },
 
-    async activate() {
+    /** @param {object|null} localPlan 报告页本地方案；无云端 plan 时会先 save */
+    async activate(localPlan = null) {
       this.loading = true
       this.error = null
       try {
-        const res = await activatePlan({})
+        const res = await ensureAndActivate(localPlan || this.activePlan)
         this.activePlan = res.plan
         this.activated = true
         return this.activePlan
       } catch (e) {
-        this.error = e.message || String(e)
+        this.error = e.userHint || e.message || String(e)
         throw e
       } finally {
         this.loading = false
@@ -66,10 +67,11 @@ export const usePlanStore = defineStore('plan', {
         const res = await getDashboard()
         this.dashboard = res
         this.activated = !!res.activated
-        if (res.plan) this.activePlan = res.plan
+        // dashboard 始终带 plan 字段；无方案时清掉，避免旧缓存误判 hasPlan
+        this.activePlan = res.plan || null
         return res
       } catch (e) {
-        this.error = e.message || String(e)
+        this.error = e.userHint || e.message || String(e)
         throw e
       } finally {
         this.loading = false
