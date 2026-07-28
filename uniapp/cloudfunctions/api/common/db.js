@@ -146,7 +146,7 @@ async function savePlan({ familyId, planInput, planOutput }) {
     recommendations: planOutput.recommendations || [],
     risk_report: planOutput.risk_report || null,
     created_at: now_,
-    activated_at: null, // 启用追踪时再填
+    activated_at: null, // 启用追踪时由 activatePlan 单独置, 本方法不填
   }
   await db.collection('budget_plans').doc(id).set({ data: doc })
   return doc
@@ -161,6 +161,93 @@ async function getActivePlan(familyId) {
   return data[0] || null
 }
 
+// ---------- weekly_entries ----------
+async function activatePlan(planId) {
+  if (!planId) throw new Error('activatePlan: planId 必填')
+  const db = getDB()
+  const now_ = Date.now()
+  // 幂等:已激活的 plan 不重复更新 activated_at
+  const before = await db.collection('budget_plans').doc(planId).get()
+  if (!before.data || before.data.length === 0) {
+    throw new Error('plan 不存在')
+  }
+  const plan = before.data[0]
+  if (plan.activated_at) {
+    return plan
+  }
+  await db.collection('budget_plans').doc(planId).update({
+    data: { activated_at: now_ }
+  })
+  return { ...plan, activated_at: now_ }
+}
+
+function currentMonthRange(d = new Date()) {
+  const y = d.getFullYear(), m = d.getMonth()
+  const first = new Date(y, m, 1)
+  const last  = new Date(y, m + 1, 0) // 当月最后一天
+  const iso = (dt) => dt.toISOString().slice(0, 10)
+  return { start: iso(first), end: iso(last), year: y, month: m + 1 }
+}
+
+async function getMonthlyEntries(familyId, year, month) {
+  const db = getDB()
+  const _ = db.command
+  // 用 month 字符串前缀简单过滤 + plan 周一起点即可
+  const firstDay = new Date(year, month - 1, 1).toISOString().slice(0, 10)
+  const nextFirst = new Date(year, month, 1).toISOString().slice(0, 10)
+  const res = await db.collection('weekly_entries').where({
+    family_id: familyId,
+    week_start: _.gte(firstDay).and(_.lt(nextFirst))
+  }).get().catch(() => ({ data: [] }))
+  return res.data || []
+}
+
+async function getWeeklyEntry(familyId, weekStart) {
+  const db = getDB()
+  const res = await db.collection('weekly_entries').where({
+    family_id: familyId,
+    week_start: weekStart
+  }).limit(1).get().catch(() => ({ data: [] }))
+  return (res.data && res.data[0]) || null
+}
+
+async function saveWeeklyEntry(familyId, weekStart, weekEnd, categories) {
+  const db = getDB()
+  const total = Object.values(categories || {}).reduce((s, v) => s + (Number(v) || 0), 0)
+  const now_ = Date.now()
+  // upsert:先查,有则 update,无则 add
+  const existing = await getWeeklyEntry(familyId, weekStart)
+  if (existing) {
+    await db.collection('weekly_entries').doc(existing._id).update({
+      data: { categories, total, updated_at: now_ }
+    })
+    return { ...existing, categories, total, updated_at: now_ }
+  }
+  const res = await db.collection('weekly_entries').add({
+    data: {
+      family_id: familyId,
+      week_start: weekStart,
+      week_end: weekEnd,
+      categories,
+      total,
+      created_at: now_,
+      updated_at: now_
+    }
+  })
+  return { _id: res._id, family_id: familyId, week_start: weekStart, week_end: weekEnd, categories, total, created_at: now_, updated_at: now_ }
+}
+
+async function getLastWeekEntry(familyId, beforeWeekStart) {
+  const db = getDB()
+  const _ = db.command
+  // 简单实现:取 week_start < beforeWeekStart 的最新一条
+  const res = await db.collection('weekly_entries').where({
+    family_id: familyId,
+    week_start: _.lt(beforeWeekStart)
+  }).orderBy('week_start', 'desc').limit(1).get().catch(() => ({ data: [] }))
+  return (res.data && res.data[0]) || null
+}
+
 module.exports = {
   getDB,
   getUserByOpenid,
@@ -171,4 +258,10 @@ module.exports = {
   createFinancialProfile,
   savePlan,
   getActivePlan,
+  activatePlan,
+  getMonthlyEntries,
+  getWeeklyEntry,
+  saveWeeklyEntry,
+  getLastWeekEntry,
+  currentMonthRange,
 }
