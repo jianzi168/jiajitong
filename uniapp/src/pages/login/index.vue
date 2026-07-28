@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import engineClient from '@/utils/engineClient'
+import { usePlanStore } from '@/stores/plan'
 
 const loading = ref(false)
 const errorMsg = ref('')
@@ -22,12 +23,16 @@ async function onWechatLogin() {
     uni.setStorageSync('family_id', profile.family_id || '')
     uni.setStorageSync('nickname', profile.user?.nickname || '')
 
-    // 跳到 preview 或 home (已有 activePlan 就 preview, 否则 home)
+    // 跳到 preview 或 home/empty
+    const planStore = usePlanStore()
     if (profile.activePlan) {
       getApp().globalData.fullPlanResult = profile.activePlan
+      planStore.activePlan = profile.activePlan
+      planStore.activated = !!profile.activePlan.activated_at
       uni.reLaunch({ url: '/subpackages/report/preview' })
     } else {
-      uni.reLaunch({ url: '/pages/home/index' })
+      planStore.clear()
+      uni.reLaunch({ url: '/pages/home/empty' })
     }
   } catch (e) {
     errorMsg.value = e.userHint || e.message || '登录失败，请稍后再试'
