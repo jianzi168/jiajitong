@@ -32,6 +32,7 @@ const memoryStore = {
   families: new Map(),
   financial_profiles: new Map(),
   budget_plans: new Map(),
+  weekly_entries: new Map(),
 }
 // ---------- cities.list ----------
 async function citiesList(ctx, payload) {
@@ -226,6 +227,281 @@ async function plansGetActive(ctx, payload) {
   return ok({ plan: plan || null })
 }
 
+// ---------- helpers (Phase 7) ----------
+function colorOf(pct) {
+  if (pct >= 90) return 'red'
+  if (pct >= 70) return 'yellow'
+  return 'green'
+}
+
+function isoWeekRange(d = new Date()) {
+  // ISO 周一
+  const day = d.getDay() || 7 // 周日=0 视作 7
+  const monday = new Date(d)
+  monday.setDate(d.getDate() - (day - 1))
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() + 6)
+  const iso = (dt) => dt.toISOString().slice(0, 10)
+  return { weekStart: iso(monday), weekEnd: iso(sunday) }
+}
+
+const WEEKLY_CAT_IDS = ['food', 'daily', 'entertainment', 'medical', 'clothing', 'transport', 'other']
+
+// 本地 helper: 找 active plan
+function findActivePlanLocal(familyId) {
+  for (const [, v] of memoryStore.budget_plans) {
+    if (v && v.family_id === familyId && v.is_active) return v
+  }
+  return null
+}
+
+// 本地 helper: 找/建 weekly entry (本周)
+function findWeeklyEntryLocal(familyId, weekStart) {
+  for (const [, v] of memoryStore.weekly_entries) {
+    if (v && v.family_id === familyId && v.week_start === weekStart) return v
+  }
+  return null
+}
+
+// 本地 helper: 找上一周 entry (week_start < 当前 weekStart)
+function findLastWeekEntryLocal(familyId, beforeWeekStart) {
+  let best = null
+  for (const [, v] of memoryStore.weekly_entries) {
+    if (v && v.family_id === familyId && v.week_start < beforeWeekStart) {
+      if (!best || v.week_start > best.week_start) best = v
+    }
+  }
+  return best
+}
+
+// 本地 helper: 本月 entries (week_start 在 [first, last] 之间)
+function findMonthlyEntriesLocal(familyId, year, month) {
+  const firstDay = new Date(year, month - 1, 1).toISOString().slice(0, 10)
+  const nextFirst = new Date(year, month, 1).toISOString().slice(0, 10)
+  const out = []
+  for (const [, v] of memoryStore.weekly_entries) {
+    if (v && v.family_id === familyId && v.week_start >= firstDay && v.week_start < nextFirst) {
+      out.push(v)
+    }
+  }
+  return out
+}
+
+// ---------- plans.activate (Phase 7) ----------
+async function plansActivate(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+
+  let user, plan
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    if (user.role !== 'owner') return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '需要 owner 权限')
+    plan = await db.getActivePlan(user.family_id)
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    if (user.role !== 'owner') return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '需要 owner 权限')
+    plan = findActivePlanLocal(user.family_id)
+  }
+
+  if (!plan) return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '当前没有 active plan')
+
+  let updated
+  if (usingCloudDb) {
+    updated = await db.activatePlan(plan._id)
+  } else {
+    // 本地: 幂等置 activated_at
+    if (!plan.activated_at) {
+      plan.activated_at = Date.now()
+    }
+    updated = plan
+  }
+
+  return ok({ plan: updated })
+}
+
+// ---------- dashboard.get (Phase 7) ----------
+async function dashboardGet(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+
+  let user, plan
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    plan = await db.getActivePlan(user.family_id)
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    plan = findActivePlanLocal(user.family_id)
+  }
+
+  if (!plan) {
+    return ok({ activated: false, plan: null, categories: [], totals: null, baby_reserve: null })
+  }
+
+  const activated = !!plan.activated_at
+  if (!activated) {
+    return ok({
+      activated: false,
+      plan: {
+        _id: plan._id,
+        monthly_summary: plan.monthly_summary,
+        baby_reserve: plan.baby_reserve,
+      },
+      categories: [],
+      totals: null,
+      baby_reserve: plan.baby_reserve || null,
+    })
+  }
+
+  // activated=true: 聚合本月 entries
+  const now = new Date()
+  let monthEntries
+  if (usingCloudDb) {
+    monthEntries = await db.getMonthlyEntries(user.family_id, now.getFullYear(), now.getMonth() + 1)
+  } else {
+    monthEntries = findMonthlyEntriesLocal(user.family_id, now.getFullYear(), now.getMonth() + 1)
+  }
+
+  const usedByCat = { food: 0, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 }
+  for (const e of monthEntries) {
+    for (const k of Object.keys(usedByCat)) {
+      usedByCat[k] += Number((e.categories && e.categories[k]) || 0)
+    }
+  }
+
+  const categories = (plan.categories || []).map((c) => {
+    const used = usedByCat[c.id] || 0
+    const pct = c.suggested > 0 ? Math.round((used / c.suggested) * 100) : 0
+    return { id: c.id, name: c.name, suggested: c.suggested, used, pct, color: colorOf(pct) }
+  })
+
+  const totalUsed = Object.values(usedByCat).reduce((s, v) => s + v, 0)
+  const totalSuggested = plan.monthly_summary && plan.monthly_summary.disposable ? plan.monthly_summary.disposable : 0
+  const totalPct = totalSuggested > 0 ? Math.round((totalUsed / totalSuggested) * 100) : 0
+
+  return ok({
+    activated: true,
+    plan: {
+      _id: plan._id,
+      monthly_summary: plan.monthly_summary,
+      baby_reserve: plan.baby_reserve,
+    },
+    categories,
+    totals: { used: totalUsed, suggested: totalSuggested, pct: totalPct, color: colorOf(totalPct) },
+    baby_reserve: plan.baby_reserve || null,
+  })
+}
+
+// ---------- weekly.getCurrent (Phase 7) ----------
+async function weeklyGetCurrent(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+
+  let user, entry
+  const { weekStart, weekEnd } = isoWeekRange()
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    entry = await db.getWeeklyEntry(user.family_id, weekStart)
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    entry = findWeeklyEntryLocal(user.family_id, weekStart)
+  }
+
+  return ok({ entry: entry || null, weekStart, weekEnd })
+}
+
+// ---------- weekly.submit (Phase 7) ----------
+async function weeklySubmit(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+  if (!payload || !payload.categories) {
+    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '缺少 categories')
+  }
+
+  let user
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  }
+
+  const { weekStart, weekEnd } = isoWeekRange()
+
+  // 校验 7 类
+  const cats = {}
+  for (const id of WEEKLY_CAT_IDS) {
+    cats[id] = Math.max(0, Math.round(Number(payload.categories[id]) || 0))
+  }
+
+  let entry
+  if (usingCloudDb) {
+    entry = await db.saveWeeklyEntry(user.family_id, weekStart, weekEnd, cats)
+  } else {
+    // 本地: upsert
+    const existing = findWeeklyEntryLocal(user.family_id, weekStart)
+    const total = Object.values(cats).reduce((s, v) => s + v, 0)
+    const nowTs = Date.now()
+    if (existing) {
+      existing.categories = cats
+      existing.total = total
+      existing.updated_at = nowTs
+      entry = existing
+    } else {
+      const id = 'w_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+      entry = {
+        _id: id,
+        family_id: user.family_id,
+        week_start: weekStart,
+        week_end: weekEnd,
+        categories: cats,
+        total,
+        created_at: nowTs,
+        updated_at: nowTs,
+      }
+      memoryStore.weekly_entries.set(id, entry)
+    }
+  }
+
+  return ok({ entry })
+}
+
+// ---------- weekly.copyLastWeek (Phase 7) ----------
+async function weeklyCopyLastWeek(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+
+  let user, last
+  const { weekStart } = isoWeekRange()
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    last = await db.getLastWeekEntry(user.family_id, weekStart)
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    last = findLastWeekEntryLocal(user.family_id, weekStart)
+  }
+
+  return ok({ categories: last ? last.categories : null })
+}
+
 module.exports = {
   'cities.list': citiesList,
   'calc.quick': calcQuick,
@@ -233,10 +509,16 @@ module.exports = {
   'user.bootstrap': userBootstrap,
   'plans.save': plansSave,
   'plans.getActive': plansGetActive,
+  'plans.activate': plansActivate,
+  'dashboard.get': dashboardGet,
+  'weekly.getCurrent': weeklyGetCurrent,
+  'weekly.submit': weeklySubmit,
+  'weekly.copyLastWeek': weeklyCopyLastWeek,
   _resetMemory() {
     memoryStore.users.clear()
     memoryStore.families.clear()
     memoryStore.financial_profiles.clear()
     memoryStore.budget_plans.clear()
+    memoryStore.weekly_entries.clear()
   },
 }
