@@ -73,8 +73,8 @@ async function createFamily({ stage, city, city_tier, city_estimated, plan_date 
   const db = getDB()
   const id = genId('fam')
   const now_ = now()
-  const doc = {
-    _id: id,
+  // _id 由 .doc(id) 指定；data 里再带 _id 会报 -501007 不能更新_id的值
+  const data = {
     name: '我的家',
     stage: stage || 'newlywed',
     city: city || '上海',
@@ -85,8 +85,8 @@ async function createFamily({ stage, city, city_tier, city_estimated, plan_date 
     created_at: now_,
     updated_at: now_,
   }
-  await db.collection('families').doc(id).set({ data: doc })
-  return doc
+  await db.collection('families').doc(id).set({ data })
+  return { _id: id, ...data }
 }
 
 async function getFamily(familyId) {
@@ -133,8 +133,8 @@ async function savePlan({ familyId, planInput, planOutput }) {
   const { total } = await db.collection('budget_plans').where({ family_id: familyId }).count()
   const version = (total || 0) + 1
 
-  const doc = {
-    _id: id,
+  // _id 由 .doc(id) 指定；data 里再带 _id 会报 -501007 不能更新_id的值
+  const data = {
     family_id: familyId,
     version,
     health_score: planOutput.health_score,
@@ -148,8 +148,8 @@ async function savePlan({ familyId, planInput, planOutput }) {
     created_at: now_,
     activated_at: null, // 启用追踪时由 activatePlan 单独置, 本方法不填
   }
-  await db.collection('budget_plans').doc(id).set({ data: doc })
-  return doc
+  await db.collection('budget_plans').doc(id).set({ data })
+  return { _id: id, ...data }
 }
 
 async function getActivePlan(familyId) {
@@ -167,11 +167,12 @@ async function activatePlan(planId) {
   const db = getDB()
   const now_ = Date.now()
   // 幂等:已激活的 plan 不重复更新 activated_at
+  // doc().get() 返回 data 为单条对象（非数组）
   const before = await db.collection('budget_plans').doc(planId).get()
-  if (!before.data || before.data.length === 0) {
+  const plan = Array.isArray(before.data) ? before.data[0] : before.data
+  if (!plan || !plan._id) {
     throw new Error('plan 不存在')
   }
-  const plan = before.data[0]
   if (plan.activated_at) {
     return plan
   }
