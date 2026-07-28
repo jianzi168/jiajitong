@@ -80,6 +80,14 @@ describe('T7-1 启用 → 填周 → 看板', () => {
     assert.ok(dashData.categories)
     assert.ok(dashData.totals)
     assert.ok(dashData.totals.used > 0)
+
+    // baby_reserve shape (T7-1 收尾: 启用了 plan 且 stage=planning → 应当有 pct/color)
+    assert.ok(dashData.baby_reserve, 'expected baby_reserve when activated with planning stage')
+    assert.equal(typeof dashData.baby_reserve.pct, 'number')
+    assert.ok(['green', 'yellow', 'red'].includes(dashData.baby_reserve.color))
+    assert.ok(dashData.baby_reserve.pct >= 0 && dashData.baby_reserve.pct <= 100)
+    // totals.pct 也不应越界
+    assert.ok(dashData.totals.pct >= 0 && dashData.totals.pct <= 100)
     console.log('T7-1 启用 → 填周 → 看板 PASS')
   })
 })
@@ -143,7 +151,7 @@ describe('T7-3 本月聚合', () => {
 describe('T7-4 未启用空态', () => {
   test('有 plan 但未 activate → activated: false, categories: [], totals: null', async () => {
     const OPENID = 't7_4_openid'
-    await bootstrapFamily(OPENID)
+    const plan = await bootstrapFamily(OPENID)
     // 不 activate
     const dash = await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID))
     const data = ok(dash)
@@ -151,7 +159,8 @@ describe('T7-4 未启用空态', () => {
     assert.equal(data.categories.length, 0)
     assert.equal(data.totals, null)
     assert.ok(data.plan)
-    assert.equal(data.plan._id, data.plan._id)
+    // dashboard 返回的 plan 应等于保存时（bootstrap）的 plan
+    assert.equal(data.plan._id, plan._id)
     console.log('T7-4 未启用空态 PASS')
   })
 
@@ -171,6 +180,66 @@ describe('T7-4 未启用空态', () => {
     await dispatch({ action: 'user.bootstrap' }, makeCtx(OPENID))
     const r = await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
     assert.equal(r.code, 40401)
+  })
+})
+
+// ---------- T7-5: baby_reserve shape (pct/color) ----------
+describe('T7-5 baby_reserve shape', () => {
+  test('有 plan 且 activate → baby_reserve 含 pct/color 且在 [0,100]', async () => {
+    const OPENID = 't7_5_openid'
+    await bootstrapFamily(OPENID)
+    await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
+    const dash = await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID))
+    const data = ok(dash)
+    assert.equal(data.activated, true)
+    assert.ok(data.baby_reserve, '有 plan + planning stage 应当有 baby_reserve')
+    assert.equal(typeof data.baby_reserve.pct, 'number')
+    assert.ok(['green', 'yellow', 'red'].includes(data.baby_reserve.color))
+    assert.ok(data.baby_reserve.pct >= 0 && data.baby_reserve.pct <= 100)
+    console.log('T7-5 baby_reserve (activated) PASS')
+  })
+
+  test('有 plan 未 activate → baby_reserve 仍含 pct/color', async () => {
+    const OPENID = 't7_5b_openid'
+    await bootstrapFamily(OPENID)
+    const dash = await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID))
+    const data = ok(dash)
+    assert.equal(data.activated, false)
+    assert.ok(data.baby_reserve, '未激活但有 plan 仍应返回 baby_reserve')
+    assert.equal(typeof data.baby_reserve.pct, 'number')
+    assert.ok(data.baby_reserve.pct >= 0 && data.baby_reserve.pct <= 100)
+    assert.ok(['green', 'yellow', 'red'].includes(data.baby_reserve.color))
+    console.log('T7-5 baby_reserve (not activated) PASS')
+  })
+
+  test('无 plan → baby_reserve: null', async () => {
+    const OPENID = 't7_5c_openid'
+    await dispatch({ action: 'user.bootstrap' }, makeCtx(OPENID))
+    const dash = await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID))
+    const data = ok(dash)
+    assert.equal(data.activated, false)
+    assert.equal(data.baby_reserve, null)
+    console.log('T7-5 baby_reserve (no plan) PASS')
+  })
+
+  test('totals.pct 不会越界 (>100 时 clamp 到 100)', async () => {
+    const OPENID = 't7_5d_openid'
+    await bootstrapFamily(OPENID)
+    await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
+    // 一次填满/超额
+    const sub = await dispatch({
+      action: 'weekly.submit',
+      payload: { categories: { food: 99999, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 } },
+    }, makeCtx(OPENID))
+    const entry = ok(sub).entry
+    assert.equal(entry.categories.food, 99999, 'food 应当被记录为 99999')
+    const dash = await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID))
+    const data = ok(dash)
+    assert.ok(data.totals, 'totals 应存在')
+    assert.ok(data.totals.pct <= 100, 'totals.pct 应当 clamp 到 ≤100')
+    // color 仍由原始 pct 决定: 应当为 red
+    assert.equal(data.totals.color, 'red')
+    console.log('T7-5 totals.pct clamp PASS')
   })
 })
 
