@@ -3,7 +3,7 @@
     <view
       class="track-fill"
       :class="fillClass"
-      :style="{ width: pct + '%' }"
+      :style="{ width: safePct + '%' }"
     />
   </view>
 </template>
@@ -16,6 +16,9 @@ const props = defineProps({
   color: { type: String, default: 'green' }, // 'green' | 'yellow' | 'red'
   size: { type: String, default: 'md' },      // 'sm' | 'md'
 })
+
+// 防御性 clamp: 避免 width 越界 (used > suggested 时, 后端应已 clamp, 这里做兜底)
+const safePct = computed(() => Math.max(0, Math.min(100, props.pct || 0)))
 
 const fillClass = computed(() => {
   if (props.color === 'red') return 'track-fill-danger'

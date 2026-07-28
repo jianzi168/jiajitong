@@ -230,6 +230,15 @@ function colorOf(pct) {
   return 'green'
 }
 
+// 把 plan.baby_reserve 原始 shape 转成前端可直读 shape
+// 原始: { target, current, monthlyRequired, monthsRemaining, monthlyIncrement, oneTimeChildbirth, pressureRatio }
+// 附加: pct, color
+function shapeBabyReserve(br) {
+  if (!br || !br.target || br.target <= 0) return null
+  const pct = Math.min(100, Math.round((br.current / br.target) * 100))
+  return { ...br, pct, color: colorOf(pct) }
+}
+
 function isoWeekRange(d = new Date()) {
   // ISO 周一
   const day = d.getDay() || 7 // 周日=0 视作 7
@@ -342,6 +351,7 @@ async function dashboardGet(ctx, payload) {
   }
 
   const activated = !!plan.activated_at
+  const babyComputed = shapeBabyReserve(plan.baby_reserve)
   if (!activated) {
     return ok({
       activated: false,
@@ -352,7 +362,7 @@ async function dashboardGet(ctx, payload) {
       },
       categories: [],
       totals: null,
-      baby_reserve: plan.baby_reserve || null,
+      baby_reserve: babyComputed,
     })
   }
 
@@ -374,13 +384,15 @@ async function dashboardGet(ctx, payload) {
 
   const categories = (plan.categories || []).map((c) => {
     const used = usedByCat[c.id] || 0
-    const pct = c.suggested > 0 ? Math.round((used / c.suggested) * 100) : 0
-    return { id: c.id, name: c.name, suggested: c.suggested, used, pct, color: colorOf(pct) }
+    const pctRaw = c.suggested > 0 ? Math.round((used / c.suggested) * 100) : 0
+    const pct = Math.min(100, pctRaw)
+    return { id: c.id, name: c.name, suggested: c.suggested, used, pct, color: colorOf(pctRaw) }
   })
 
   const totalUsed = Object.values(usedByCat).reduce((s, v) => s + v, 0)
   const totalSuggested = plan.monthly_summary && plan.monthly_summary.disposable ? plan.monthly_summary.disposable : 0
-  const totalPct = totalSuggested > 0 ? Math.round((totalUsed / totalSuggested) * 100) : 0
+  const totalPctRaw = totalSuggested > 0 ? Math.round((totalUsed / totalSuggested) * 100) : 0
+  const totalPct = Math.min(100, totalPctRaw)
 
   return ok({
     activated: true,
@@ -390,8 +402,8 @@ async function dashboardGet(ctx, payload) {
       baby_reserve: plan.baby_reserve,
     },
     categories,
-    totals: { used: totalUsed, suggested: totalSuggested, pct: totalPct, color: colorOf(totalPct) },
-    baby_reserve: plan.baby_reserve || null,
+    totals: { used: totalUsed, suggested: totalSuggested, pct: totalPct, color: colorOf(totalPctRaw) },
+    baby_reserve: babyComputed,
   })
 }
 
