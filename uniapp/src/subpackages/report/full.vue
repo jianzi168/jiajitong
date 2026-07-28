@@ -74,7 +74,22 @@ function fmtPct(num, denom) {
 function stubTap(title) {
   uni.showToast({ title, icon: 'none' })
 }
-function onActivate() { stubTap('待接入追踪 (Phase 7)') }
+function onActivate() {
+  // Phase 7: 启用预算追踪 → 看板
+  import('@/services/api').then(({ activatePlan }) => {
+    uni.showLoading({ title: '启用中...' })
+    return activatePlan({})
+      .then(() => {
+        uni.hideLoading()
+        uni.showToast({ title: '已启用追踪', icon: 'success' })
+        setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 600)
+      })
+      .catch((e) => {
+        uni.hideLoading()
+        uni.showToast({ title: e.message || '启用失败', icon: 'none' })
+      })
+  })
+}
 function onInvite() { stubTap('邀请伴侣 (Phase 10)') }
 function onExportPdf() { stubTap('PDF 导出 (Phase 8)') }
 </script>

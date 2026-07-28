@@ -56,13 +56,32 @@ async function dispatch(event, ctx = {}) {
 
 /**
  * 云函数入口
+ *
+ * openid 来源: 优先 cloud.getWXContext()(技术方案 §6.x 标准), 退到 context.wxContext(老调用方),
+ * 最后从传入的 ctx.openid 兜底(本地测试)。
  */
 async function main(event, context) {
-  const wxContext = (cloud && context && context.wxContext) || {}
+  let openid = null, unionid = null, appid = null
+  if (cloud && typeof cloud.getWXContext === 'function') {
+    try {
+      const wxContext = cloud.getWXContext()
+      openid = wxContext.OPENID || null
+      unionid = wxContext.UNIONID || null
+      appid = wxContext.APPID || null
+    } catch (e) {
+      console.warn('[api] getWXContext failed:', e && (e.errMsg || e.message))
+    }
+  }
+  if (!openid && context && context.wxContext) {
+    openid = context.wxContext.OPENID || openid
+    unionid = context.wxContext.UNIONID || unionid
+    appid = context.wxContext.APPID || appid
+  }
+
   const ctx = {
-    openid: wxContext.OPENID || null,
-    unionid: wxContext.UNIONID || null,
-    appid: wxContext.APPID || null,
+    openid,
+    unionid,
+    appid,
     requestId: event && event.requestId || null,
   }
   return dispatch(event, ctx)

@@ -2,12 +2,15 @@
 import { onLaunch, onShow } from '@dcloudio/uni-app'
 import { initCloud } from '@/services/cloud'
 import { getCloudEnvId, BUILD_ENV } from '@/config/cloud'
+import { usePlanStore } from '@/stores/plan'
 
 onLaunch(() => {
   // #ifdef MP-WEIXIN
   initCloud(getCloudEnvId())
   console.log('[App] onLaunch: cloud env =', BUILD_ENV, getCloudEnvId())
-  // TODO(Phase 6): userStore().bootstrap()
+  // Phase 7: 拉一次当前方案, 让 home/dashboard onShow 有缓存可读
+  const planStore = usePlanStore()
+  planStore.loadActive().catch(() => {})
   // #endif
   // #ifndef MP-WEIXIN
   console.warn('家计通 MVP 仅支持微信小程序，当前平台不可用')
