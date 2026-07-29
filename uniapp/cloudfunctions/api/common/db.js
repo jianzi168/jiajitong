@@ -162,6 +162,171 @@ async function getActivePlan(familyId) {
 }
 
 // ---------- weekly_entries ----------
+async function getLastWeekEntry(familyId, beforeWeekStart) {
+  const db = getDB()
+  const _ = db.command
+  // 简单实现:取 week_start < beforeWeekStart 的最新一条
+  const res = await db.collection('weekly_entries').where({
+    family_id: familyId,
+    week_start: _.lt(beforeWeekStart)
+  }).orderBy('week_start', 'desc').limit(1).get().catch(() => ({ data: [] }))
+  return (res.data && res.data[0]) || null
+}
+
+// ============================================================
+// Phase 8 商业化
+// ============================================================
+
+// ---------- subscriptions ----------
+/**
+ * 按 family_id 读订阅(始终返回一条,缺则视为 free)
+ * 不校验过期, 业务层 getActiveSubscription 才校验
+ */
+async function getSubscriptionByFamily(familyId) {
+  const db = getDB()
+  const { data } = await db.collection('subscriptions').where({ family_id: familyId }).limit(1).get()
+  return (data && data[0]) || null
+}
+
+/**
+ * upsert 订阅(按 family_id 业务主键)
+ * 一户一份, 覆盖式写; 旧 plan_type 信息丢失由 entitlements 重算补偿
+ */
+async function upsertSubscription({ familyId, openid, plan_type, started_at, expires_at, source_order_id }) {
+  const db = getDB()
+  const now_ = now()
+  const existing = await getSubscriptionByFamily(familyId)
+  if (existing && existing._id) {
+    await db.collection('subscriptions').doc(existing._id).update({
+      data: { openid, plan_type, started_at, expires_at, source_order_id, updated_at: now_ }
+    })
+    return { ...existing, openid, plan_type, started_at, expires_at, source_order_id, updated_at: now_ }
+  }
+  const res = await db.collection('subscriptions').add({
+    data: {
+      family_id: familyId,
+      openid,
+      plan_type,
+      started_at: started_at || now_,
+      expires_at: expires_at || null,
+      source_order_id: source_order_id || null,
+      created_at: now_,
+      updated_at: now_,
+    }
+  })
+  return { _id: res._id, family_id: familyId, openid, plan_type, started_at, expires_at, source_order_id, created_at: now_, updated_at: now_ }
+}
+
+/**
+ * 读"有效"订阅(未过期或永久)
+ * 返回 { subscription, effectivePlanType, isExpired }
+ *  - 无记录 → effectivePlanType='free', isExpired=false
+ *  - 有记录但 expires_at < now → effectivePlanType='free'(DB 字段保留), isExpired=true
+ */
+async function getActiveSubscription(familyId) {
+  const sub = await getSubscriptionByFamily(familyId)
+  if (!sub) {
+    return { subscription: null, effectivePlanType: 'free', isExpired: false }
+  }
+  const nowMs = Date.now()
+  const isExpired = sub.expires_at ? sub.expires_at <= nowMs : false
+  const effectivePlanType = isExpired ? 'free' : sub.plan_type
+  return { subscription: sub, effectivePlanType, isExpired }
+}
+
+// ---------- orders ----------
+/**
+ * 创建 pending 订单; amount_fen 由调用方从 SKU 表取
+ * 幂等: 同一 openid+client_request_id 返回同一订单(本期先不加索引, 业务层去重)
+ */
+async function createOrder({ openid, familyId, sku, amount_fen, client_request_id = null }) {
+  const db = getDB()
+  const now_ = now()
+  const id = genId('ord')
+  const doc = {
+    family_id: familyId,
+    openid,
+    sku,
+    amount_fen,
+    status: 'pending',
+    pay_channel: 'mock',         // 本期固定 mock; 真支付上线后改为 'wxpay'
+    out_trade_no: id,
+    wx_transaction_id: null,
+    paid_at: null,
+    client_request_id: client_request_id || null,
+    created_at: now_,
+    updated_at: now_,
+  }
+  await db.collection('orders').doc(id).set({ data: doc })
+  return { _id: id, ...doc }
+}
+
+/**
+ * 按 order_id 读订单, 强制校验 openid 归属
+ * 越权返回 null (handler 层返回 40301)
+ */
+async function getOrder(orderId, openid) {
+  if (!orderId) return null
+  const db = getDB()
+  const before = await db.collection('orders').doc(orderId).get()
+  const order = Array.isArray(before.data) ? before.data[0] : before.data
+  if (!order || !order._id) return null
+  if (openid && order.openid !== openid) return null  // 越权
+  return order
+}
+
+/**
+ * 置订单为 paid; 写 paid_at + wx_transaction_id + updated_at
+ */
+async function markOrderPaid({ orderId, channel, transactionId }) {
+  if (!orderId) throw new Error('markOrderPaid: orderId 必填')
+  const db = getDB()
+  const now_ = Date.now()
+  await db.collection('orders').doc(orderId).update({
+    data: {
+      status: 'paid',
+      pay_channel: channel || 'mock',
+      wx_transaction_id: transactionId || null,
+      paid_at: now_,
+      updated_at: now_,
+    }
+  })
+  return { ok: true, paid_at: now_ }
+}
+
+// ---------- app_config ----------
+/**
+ * 读 app_config[key]; 缺则 null
+ */
+async function getAppConfig(key) {
+  if (!key) return null
+  const db = getDB()
+  const { data } = await db.collection('app_config').where({ key }).limit(1).get()
+  if (!data || !data[0]) return null
+  return data[0].value
+}
+
+/**
+ * 写 app_config[key]; upsert
+ */
+async function setAppConfig({ key, value, updated_by = 'system' }) {
+  if (!key) throw new Error('setAppConfig: key 必填')
+  const db = getDB()
+  const now_ = now()
+  const { data } = await db.collection('app_config').where({ key }).limit(1).get()
+  if (data && data[0] && data[0]._id) {
+    await db.collection('app_config').doc(data[0]._id).update({
+      data: { value, updated_at: now_, updated_by }
+    })
+    return { key, value, updated_at: now_ }
+  }
+  await db.collection('app_config').add({
+    data: { key, value, updated_at: now_, updated_by }
+  })
+  return { key, value, updated_at: now_ }
+}
+
+// ---------- weekly_entries (已有方法上移, 保持原位) ----------
 async function activatePlan(planId) {
   if (!planId) throw new Error('activatePlan: planId 必填')
   const db = getDB()
@@ -238,17 +403,6 @@ async function saveWeeklyEntry(familyId, weekStart, weekEnd, categories) {
   return { _id: res._id, family_id: familyId, week_start: weekStart, week_end: weekEnd, categories, total, created_at: now_, updated_at: now_ }
 }
 
-async function getLastWeekEntry(familyId, beforeWeekStart) {
-  const db = getDB()
-  const _ = db.command
-  // 简单实现:取 week_start < beforeWeekStart 的最新一条
-  const res = await db.collection('weekly_entries').where({
-    family_id: familyId,
-    week_start: _.lt(beforeWeekStart)
-  }).orderBy('week_start', 'desc').limit(1).get().catch(() => ({ data: [] }))
-  return (res.data && res.data[0]) || null
-}
-
 module.exports = {
   getDB,
   getUserByOpenid,
@@ -265,4 +419,13 @@ module.exports = {
   saveWeeklyEntry,
   getLastWeekEntry,
   currentMonthRange,
+  // ---------- Phase 8 商业化 ----------
+  getSubscriptionByFamily,
+  upsertSubscription,
+  getActiveSubscription,
+  createOrder,
+  getOrder,
+  markOrderPaid,
+  getAppConfig,
+  setAppConfig,
 }

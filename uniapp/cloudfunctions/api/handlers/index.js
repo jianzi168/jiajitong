@@ -33,6 +33,55 @@ const memoryStore = {
   financial_profiles: new Map(),
   budget_plans: new Map(),
   weekly_entries: new Map(),
+  // Phase 8 商业化
+  subscriptions: new Map(),
+  orders: new Map(),
+  app_config: new Map(),
+}
+
+// ---------- Phase 8: 权益计算纯函数 ----------
+/**
+ * 给定 plan_type + expires_at + now, 算出 entitlements
+ * 纯函数, 测试可注入固定 now 验证跨年/2 月 29 日
+ */
+function calcEntitlements(plan_type, expires_at, now) {
+  const paid = ['pro_yearly', 'pro_family', 'report_once'].includes(plan_type)
+  const notExpired = !expires_at || expires_at > now
+  const canViewFull = paid && notExpired
+  const canExportPdf = canViewFull
+  const canShareFree = true
+  const daysRemaining = expires_at
+    ? Math.max(0, Math.ceil((expires_at - now) / 86400000))
+    : null
+  return { canViewFull, canExportPdf, canShareFree, daysRemaining }
+}
+
+/**
+ * SKU catalog: 服务端唯一真值
+ * 客户端不得传入 amount_fen 或 expires_at
+ */
+const SKU_CATALOG = {
+  report_once: { amount_fen: 1990, days: 7, plan_type: 'report_once' },
+  pro_yearly:  { amount_fen: 6800, days: 365, plan_type: 'pro_yearly' },
+  pro_family:  { amount_fen: 12800, days: 365, plan_type: 'pro_family' }, // 本期禁用
+}
+
+/**
+ * 给定 now + order + 已存在的 subscription, 算出新 expires_at
+ *  - report_once: now + 7d
+ *  - pro_yearly 首次: now + 365d
+ *  - pro_yearly 续费: max(now, current_expires_at) + 365d
+ *  - Pro 覆盖 report_once: 直接 now + 365d (旧 7 天失效)
+ */
+function computeExpiresAt(order, currentSub, now) {
+  const sku = SKU_CATALOG[order.sku]
+  if (!sku) return null
+  if (order.sku === 'report_once') return now + sku.days * 86400000
+  // pro_yearly / pro_family
+  if (currentSub && currentSub.plan_type === sku.plan_type && currentSub.expires_at && currentSub.expires_at > now) {
+    return currentSub.expires_at + sku.days * 86400000
+  }
+  return now + sku.days * 86400000
 }
 // ---------- cities.list ----------
 async function citiesList(ctx, payload) {
@@ -145,12 +194,47 @@ async function userBootstrap(ctx, payload) {
     }
   }
 
+  // Phase 8: 读真实订阅 (无则保持 free 空壳, 不阻塞 bootstrap)
+  let subscription = { plan_type: 'free', expires_at: null, source_order_id: null, started_at: null }
+  try {
+    const { subscription: sub, effectivePlanType } = await subscriptionGetEffective(user.family_id)
+    if (sub) {
+      subscription = {
+        plan_type: sub.plan_type,
+        expires_at: sub.expires_at || null,
+        source_order_id: sub.source_order_id || null,
+        started_at: sub.started_at || null,
+        effective_plan_type: effectivePlanType,
+      }
+    }
+  } catch (e) {
+    console.warn('[userBootstrap] subscription read failed, fallback to free:', e.message)
+  }
+
   return ok({
     user,
     family_id: user.family_id,
-    subscription: { plan_type: 'free', expires_at: null },
+    subscription,
     activePlan,
   })
+}
+
+/**
+ * 读家庭有效订阅(纯函数 + memoryStore/cloudDb 双路)
+ * 内部 helper, 不在 module.exports 暴露
+ */
+async function subscriptionGetEffective(familyId) {
+  if (db) {
+    const { subscription, effectivePlanType } = await db.getActiveSubscription(familyId)
+    return { subscription, effectivePlanType }
+  }
+  let sub = null
+  for (const [, v] of memoryStore.subscriptions) {
+    if (v && v.family_id === familyId) { sub = v; break }
+  }
+  if (!sub) return { subscription: null, effectivePlanType: 'free' }
+  const isExpired = sub.expires_at ? sub.expires_at <= Date.now() : false
+  return { subscription: sub, effectivePlanType: isExpired ? 'free' : sub.plan_type }
 }
 
 // ---------- plans.save (Phase 6) ----------
@@ -510,6 +594,309 @@ async function weeklyCopyLastWeek(ctx, payload) {
   return ok({ categories: last ? last.categories : null })
 }
 
+// ============================================================
+// Phase 8 商业化 action
+// ============================================================
+
+// ---------- subscription.get ----------
+async function subscriptionGet(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+
+  // 取 user
+  let user
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  }
+
+  const { subscription, effectivePlanType } = await subscriptionGetEffective(user.family_id)
+  // T8-12: 无记录时懒写 free, 保证前端总是有 subscription 字段
+  let subRow = subscription
+  if (!subRow) {
+    if (usingCloudDb) {
+      subRow = await db.upsertSubscription({
+        familyId: user.family_id, openid, plan_type: 'free',
+        started_at: Date.now(), expires_at: null, source_order_id: null,
+      })
+    } else {
+      const now_ = Date.now()
+      const id = 'sub_' + now_ + '_' + Math.random().toString(36).slice(2, 6)
+      subRow = {
+        _id: id, family_id: user.family_id, openid,
+        plan_type: 'free', started_at: now_, expires_at: null, source_order_id: null,
+        created_at: now_, updated_at: now_,
+      }
+      memoryStore.subscriptions.set(id, subRow)
+    }
+  }
+  const now = Date.now()
+  const plan_type = subRow.plan_type
+  const expires_at = subRow.expires_at || null
+  const entitlements = calcEntitlements(plan_type, expires_at, now)
+
+  return ok({
+    subscription: {
+      plan_type,
+      expires_at,
+      started_at: subRow.started_at || null,
+      source_order_id: subRow.source_order_id || null,
+    },
+    effective_plan_type: effectivePlanType,
+    entitlements,
+    server_now: now,
+  })
+}
+
+// ---------- orders.create ----------
+async function ordersCreate(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+  const { sku, client_request_id } = payload || {}
+  if (!sku || !SKU_CATALOG[sku]) {
+    return fail(ERROR_CODE.INVALID_SKU, 'INVALID_SKU', '不支持的 SKU')
+  }
+  if (sku === 'pro_family') {
+    return fail(ERROR_CODE.INVALID_SKU, 'INVALID_SKU', '家庭版敬请期待')
+  }
+
+  // owner 鉴权
+  let user
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    if (user.role !== 'owner') return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '需要 owner 权限')
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    if (user.role !== 'owner') return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '需要 owner 权限')
+  }
+
+  // 必须有 active plan
+  let activePlan = null
+  if (usingCloudDb) {
+    activePlan = await db.getActivePlan(user.family_id)
+  } else {
+    for (const [, v] of memoryStore.budget_plans) {
+      if (v && v.family_id === user.family_id && v.is_active) { activePlan = v; break }
+    }
+  }
+  if (!activePlan) {
+    return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '请先生成预算方案')
+  }
+
+  // 已有同级或更高有效权益 → 拒绝 (T8 防降级)
+  const { effectivePlanType } = await subscriptionGetEffective(user.family_id)
+  if (sku === 'report_once' && (effectivePlanType === 'pro_yearly' || effectivePlanType === 'pro_family')) {
+    return fail(ERROR_CODE.ALREADY_ENTITLED, 'ALREADY_ENTITLED', '您已是 Pro 会员')
+  }
+
+  // 读 SKU 金额 (优先 app_config, fallback 写死)
+  let amount_fen = SKU_CATALOG[sku].amount_fen
+  if (usingCloudDb) {
+    const cfg = await db.getAppConfig('paywall_prices_v1')
+    if (cfg && cfg[sku] && typeof cfg[sku] === 'number') {
+      amount_fen = cfg[sku]
+    }
+  } else {
+    const cfg = memoryStore.app_config.get('paywall_prices_v1')
+    if (cfg && cfg.value && cfg.value[sku] && typeof cfg.value[sku] === 'number') {
+      amount_fen = cfg.value[sku]
+    }
+  }
+
+  // 写 pending order
+  let order
+  if (usingCloudDb) {
+    order = await db.createOrder({
+      openid, familyId: user.family_id, sku, amount_fen,
+      client_request_id: client_request_id || null,
+    })
+  } else {
+    const id = 'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+    const now_ = Date.now()
+    order = {
+      _id: id,
+      openid, family_id: user.family_id, sku, amount_fen,
+      status: 'pending', pay_channel: 'mock',
+      out_trade_no: id, wx_transaction_id: null, paid_at: null,
+      client_request_id: client_request_id || null,
+      created_at: now_, updated_at: now_,
+    }
+    memoryStore.orders.set(id, order)
+  }
+
+  return ok({
+    order,
+    payment: {
+      mock: true,
+      order_id: order._id,
+      sku,
+      amount_fen,
+    },
+  })
+}
+
+// ---------- orders.mockPay ----------
+async function ordersMockPay(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+  const { order_id } = payload || {}
+  if (!order_id) {
+    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '缺少 order_id')
+  }
+
+  // owner 鉴权
+  let user
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    if (user.role !== 'owner') return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '需要 owner 权限')
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    if (user.role !== 'owner') return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '需要 owner 权限')
+  }
+
+  // 读订单 + 校验归属
+  let order
+  if (usingCloudDb) {
+    order = await db.getOrder(order_id, openid)
+    if (!order) return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '订单不属于当前用户')
+  } else {
+    const o = memoryStore.orders.get(order_id)
+    if (!o) return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '订单不存在')
+    if (o.openid !== openid) return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '订单不属于当前用户')
+    order = o
+  }
+
+  if (order.status !== 'pending') {
+    return fail(ERROR_CODE.ORDER_STATUS_INVALID, 'ORDER_STATUS_INVALID', `订单已是 ${order.status} 状态`)
+  }
+
+  const now = Date.now()
+
+  // 置 paid
+  if (usingCloudDb) {
+    await db.markOrderPaid({ orderId: order_id, channel: 'mock', transactionId: 'MOCK_' + order_id })
+  } else {
+    order.status = 'paid'
+    order.pay_channel = 'mock'
+    order.wx_transaction_id = 'MOCK_' + order_id
+    order.paid_at = now
+    order.updated_at = now
+  }
+
+  // upsert subscription
+  const { subscription: currentSub } = await subscriptionGetEffective(user.family_id)
+  const expires_at = computeExpiresAt(order, currentSub, now)
+  const plan_type = SKU_CATALOG[order.sku].plan_type
+  const started_at = currentSub ? (currentSub.started_at || now) : now
+
+  let newSub
+  if (usingCloudDb) {
+    newSub = await db.upsertSubscription({
+      familyId: user.family_id, openid, plan_type, started_at, expires_at,
+      source_order_id: order_id,
+    })
+  } else {
+    newSub = {
+      family_id: user.family_id, openid, plan_type, started_at, expires_at,
+      source_order_id: order_id, updated_at: now,
+    }
+    // 一户一份: 删旧
+    for (const [k, v] of memoryStore.subscriptions) {
+      if (v && v.family_id === user.family_id) memoryStore.subscriptions.delete(k)
+    }
+    newSub._id = 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+    newSub.created_at = now
+    memoryStore.subscriptions.set(newSub._id, newSub)
+  }
+
+  const entitlements = calcEntitlements(plan_type, expires_at, now)
+
+  // 重读订单返回最新
+  const updatedOrder = usingCloudDb
+    ? await db.getOrder(order_id, openid)
+    : memoryStore.orders.get(order_id)
+
+  return ok({
+    order: updatedOrder,
+    subscription: {
+      plan_type,
+      expires_at,
+      started_at,
+      source_order_id: order_id,
+      entitlements,
+    },
+  })
+}
+
+// ---------- share.getQrCode ----------
+async function shareGetQrCode(ctx, payload) {
+  if (!ctx || !ctx.openid) {
+    return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+  const openid = ctx.openid
+  const page_path = (payload && payload.page_path) || 'pages/landing/index'
+
+  // 鉴权
+  let user
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
+  }
+
+  // 本地模式: 直接返回 placeholder
+  if (!usingCloudDb) {
+    return ok({
+      mode: 'placeholder',
+      file_id: '',
+      temp_url: '',
+      page: page_path,
+      scene: 'from=poster',
+    })
+  }
+
+  // 云端: try/catch wxacode
+  try {
+    const cloud = require('wx-server-sdk')
+    const qrRes = await cloud.openapi.wxacode.getUnlimited({
+      scene: 'from=poster',
+      page: page_path,
+      width: 280,
+    })
+    return ok({
+      mode: 'wxacode',
+      file_id: '',
+      temp_url: qrRes.buffer || '',
+      page: page_path,
+      scene: 'from=poster',
+    })
+  } catch (e) {
+    console.warn('[shareGetQrCode] wxacode failed, fallback placeholder:', e.message)
+    return ok({
+      mode: 'placeholder',
+      file_id: '',
+      temp_url: '',
+      page: page_path,
+      scene: 'from=poster',
+    })
+  }
+}
+
 module.exports = {
   'cities.list': citiesList,
   'calc.quick': calcQuick,
@@ -522,17 +909,41 @@ module.exports = {
   'weekly.getCurrent': weeklyGetCurrent,
   'weekly.submit': weeklySubmit,
   'weekly.copyLastWeek': weeklyCopyLastWeek,
+  // Phase 8 商业化
+  'subscription.get': subscriptionGet,
+  'orders.create': ordersCreate,
+  'orders.mockPay': ordersMockPay,
+  'share.getQrCode': shareGetQrCode,
+  // 纯函数导出 (供测试)
+  calcEntitlements,
+  computeExpiresAt,
+  SKU_CATALOG,
   _resetMemory() {
     memoryStore.users.clear()
     memoryStore.families.clear()
     memoryStore.financial_profiles.clear()
     memoryStore.budget_plans.clear()
     memoryStore.weekly_entries.clear()
+    memoryStore.subscriptions.clear()
+    memoryStore.orders.clear()
+    memoryStore.app_config.clear()
   },
   _seedWeeklyEntry(entry) {
     const id = entry._id || `seed_w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const stored = { _id: id, ...entry }
     memoryStore.weekly_entries.set(id, stored)
+    return stored
+  },
+  _seedSubscription(sub) {
+    const id = sub._id || `seed_s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const stored = { _id: id, ...sub }
+    memoryStore.subscriptions.set(id, stored)
+    return stored
+  },
+  _seedOrder(order) {
+    const id = order._id || `seed_o_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const stored = { _id: id, ...order }
+    memoryStore.orders.set(id, stored)
     return stored
   },
 }

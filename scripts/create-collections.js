@@ -23,7 +23,13 @@ async function main() {
   cloud.init({ env: envId })
   const db = cloud.database()
 
-  const collections = ['users', 'families', 'financial_profiles', 'budget_plans', 'weekly_entries']
+  const collections = [
+    'users', 'families', 'financial_profiles', 'budget_plans', 'weekly_entries',
+    // Phase 8 商业化
+    'subscriptions', 'orders', 'app_config',
+    // Phase 9 预留
+    'recommendation_status', 'family_invites', 'calc_sessions', 'analytics_events', 'family_members',
+  ]
 
   console.log('=== 1. 创建集合 ===')
   for (const name of collections) {
@@ -52,6 +58,26 @@ async function main() {
   await safeCreateIndex(db, 'weekly_entries', 'family_week_start', { family_id: 1, week_start: 1 }, { unique: true })
   // weekly_entries.family_id 单键, 用于月内聚合
   await safeCreateIndex(db, 'weekly_entries', 'family_id', { family_id: 1 })
+
+  // ---------- Phase 8 商业化索引 ----------
+  // subscriptions: 一户一份,family_id 业务主键
+  await safeCreateIndex(db, 'subscriptions', 'family_id_1', { family_id: 1 }, { unique: true })
+  await safeCreateIndex(db, 'subscriptions', 'openid_1', { openid: 1 })
+  // orders: 按用户时间倒序
+  await safeCreateIndex(db, 'orders', 'openid_created', { openid: 1, created_at: -1 })
+  await safeCreateIndex(db, 'orders', 'family_created', { family_id: 1, created_at: -1 })
+  // app_config: 业务键唯一
+  await safeCreateIndex(db, 'app_config', 'key_1', { key: 1 }, { unique: true })
+  // recommendation_status (Phase 7 留 P1,本期先建索引)
+  await safeCreateIndex(db, 'recommendation_status', 'family_plan_rule', { family_id: 1, plan_id: 1, rule_id: 1 }, { unique: true })
+  // family_invites: 邀请码唯一
+  await safeCreateIndex(db, 'family_invites', 'invite_code_1', { invite_code: 1 }, { unique: true })
+  // calc_sessions: 过期清理
+  await safeCreateIndex(db, 'calc_sessions', 'expire_at_1', { expire_at: 1 })
+  // analytics_events: 漏斗
+  await safeCreateIndex(db, 'analytics_events', 'event_created', { event: 1, created_at: -1 })
+  // family_members: 一户一人
+  await safeCreateIndex(db, 'family_members', 'family_openid', { family_id: 1, openid: 1 }, { unique: true })
 
   console.log('\n✅ 初始化完成')
   process.exit(0)
