@@ -4,8 +4,10 @@ import { onShow } from '@dcloudio/uni-app'
 import FloatNav from '@/components/FloatNav.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
 import { usePlanStore } from '@/stores/plan'
+import { useSubscriptionStore } from '@/stores/subscription'
 
 const store = usePlanStore()
+const subStore = useSubscriptionStore()
 const statusBarHeight = (uni.getSystemInfoSync().statusBarHeight || 20) * 2
 
 // 当前月份显示文案（如 "7月预算"）
@@ -22,9 +24,22 @@ const categories = computed(() => dashboard.value.categories || [])
 const totals = computed(() => dashboard.value.totals || null)
 const babyReserve = computed(() => dashboard.value.baby_reserve || null)
 
+// Phase 8: free 看板只显示前 2 类真实数据, 后 5 类占位
+const FREE_VISIBLE_CATS = 2
+const visibleCategories = computed(() => {
+  if (subStore.canViewFull) return categories.value
+  return categories.value.map((c, idx) => {
+    if (idx < FREE_VISIBLE_CATS) return c
+    return { ...c, used: null, pct: 0, color: 'green', _locked: true }
+  })
+})
+
 onShow(async () => {
   try {
-    await store.loadDashboard()
+    await Promise.all([
+      store.loadDashboard(),
+      subStore.refresh(),
+    ])
   } catch (e) {
     uni.showToast({ title: e.userHint || e.message || '加载失败', icon: 'none' })
   }
@@ -54,6 +69,9 @@ function onActions() {
 }
 function onReview() {
   uni.navigateTo({ url: '/pages/review/index' })
+}
+function onPaywall() {
+  uni.navigateTo({ url: '/pages/paywall/index?from=dashboard' })
 }
 </script>
 
@@ -113,13 +131,27 @@ function onReview() {
 
         <text class="section-heading">7 大类进度</text>
         <view class="category-list">
-          <view class="category-cell" v-for="c in categories" :key="c.id" @tap="onWeekly">
+          <view
+            v-for="c in visibleCategories"
+            :key="c.id"
+            class="category-cell"
+            :class="{ 'category-locked': c._locked }"
+            @tap="c._locked ? onPaywall() : onWeekly()"
+          >
             <view class="cell-header">
-              <text>{{ c.name }}</text>
-              <text>¥{{ c.used }} / ¥{{ c.suggested }}</text>
+              <text>{{ c.name }}<text v-if="c._locked" class="lock-emoji"> 🔒</text></text>
+              <text v-if="c._locked" class="lock-text">解锁 Pro 查看</text>
+              <text v-else>¥{{ c.used }} / ¥{{ c.suggested }}</text>
             </view>
-            <ProgressBar :pct="c.pct" :color="c.color" size="sm" />
+            <ProgressBar v-if="!c._locked" :pct="c.pct" :color="c.color" size="sm" />
+            <view v-else class="locked-bar" />
           </view>
+        </view>
+
+        <!-- Phase 8: free 用户显示 Pro CTA 卡 -->
+        <view v-if="!subStore.canViewFull" class="pro-cta glass-card" @tap="onPaywall">
+          <text class="pro-cta-title">解锁 Pro 查看完整 7 类趋势</text>
+          <text class="pro-cta-sub">¥68 / 年 · 含月度复盘 + 全部建议 + PDF 导出</text>
         </view>
 
         <view class="action-row">
@@ -192,4 +224,22 @@ function onReview() {
   color: var(--color-coral);
   opacity: 0.7;
 }
+.category-locked { opacity: 0.6; }
+.lock-emoji { font-size: 22rpx; }
+.lock-text { color: var(--color-coral); font-size: 24rpx; font-weight: 500; }
+.locked-bar {
+  height: 8rpx;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4rpx;
+  margin-top: 4rpx;
+}
+.pro-cta {
+  margin: 16rpx 24rpx;
+  padding: 24rpx;
+  text-align: center;
+  background: linear-gradient(135deg, rgba(255, 107, 138, 0.1), rgba(255, 177, 153, 0.1));
+  border: 2rpx solid rgba(255, 107, 138, 0.3);
+}
+.pro-cta-title { display: block; font-size: 30rpx; font-weight: 700; color: #FF6B8A; margin-bottom: 8rpx; }
+.pro-cta-sub { display: block; font-size: 24rpx; color: var(--color-text-2); }
 </style>

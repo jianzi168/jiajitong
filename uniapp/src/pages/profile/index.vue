@@ -1,5 +1,29 @@
 <script setup>
+import { computed, onShow } from 'vue'
 import FloatNav from '@/components/FloatNav.vue'
+import { useSubscriptionStore } from '@/stores/subscription'
+
+const subStore = useSubscriptionStore()
+
+onShow(async () => {
+  try { await subStore.refresh() } catch (e) {}
+})
+
+function fmtDate(ms) {
+  if (!ms) return ''
+  const d = new Date(ms)
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+}
+
+const subscriptionLabel = computed(() => {
+  if (subStore.isPro) {
+    return `Pro 至 ${fmtDate(subStore.subscription?.expires_at)}`
+  }
+  if (subStore.isReportOnce) {
+    return `单次报告 至 ${fmtDate(subStore.subscription?.expires_at)}`
+  }
+  return '免费版'
+})
 
 const menus = [
   { label: '家庭档案', url: '/pages/family/index' },
@@ -18,10 +42,10 @@ function onMenu(item) {
 <template>
   <view class="screen">
     <view class="profile-banner mesh-bg">
-      <view class="avatar-circle">晓</view>
+      <view class="avatar-circle">家</view>
       <view>
-        <text class="profile-name">晓雯的家庭</text>
-        <text class="profile-sub">上海 · 备孕中 · Pro 至 2027/06</text>
+        <text class="profile-name">家计通</text>
+        <text class="profile-sub">{{ subscriptionLabel }}</text>
       </view>
     </view>
 
@@ -38,7 +62,7 @@ function onMenu(item) {
   </view>
 </template>
 
-<style>
+<style scoped>
 .profile-banner { padding-top: 88rpx; }
 .profile-name { display: block; }
 </style>

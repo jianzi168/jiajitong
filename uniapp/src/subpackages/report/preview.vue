@@ -4,16 +4,25 @@ import ScoreRing from '@/components/ScoreRing.vue'
 import NavBar from '@/components/NavBar.vue'
 import engineClient from '@/utils/engineClient'
 import { ensureAndActivate } from '@/services/api'
+import { useSubscriptionStore } from '@/stores/subscription'
 
 const loading = ref(true)
 const errorMsg = ref('')
 const plan = ref(null)
+
+const subStore = useSubscriptionStore()
 
 // Free 权益（PDD §5.3）：仅显示 2 类预算 + 1 条建议 + 摘要备育
 const FREE_VISIBLE_CATEGORIES = 2
 const FREE_VISIBLE_RECOMMENDATIONS = 1
 
 onMounted(async () => {
+  // Phase 8: 同时拉 plan + subscription, 避免付费内容短暂闪现
+  try {
+    await subStore.refresh()
+  } catch (e) {
+    console.warn('[preview] subscription refresh failed:', e)
+  }
   // 优先从云端 plan.getActive 拉 (Phase 6)
   try {
     const r = await engineClient.callPlanGetActive()
@@ -42,26 +51,47 @@ const riskLabel = computed(() => ({
 
 const disposable = computed(() => plan.value?.monthly_summary?.disposable || 0)
 
+// Phase 8: 付费用户看全部, 免费用户看前 2 类
 const visibleCategories = computed(() => {
   const all = plan.value?.categories || []
+  if (subStore.canViewFull) {
+    return { shown: all, hidden: [] }
+  }
   return {
     shown: all.slice(0, FREE_VISIBLE_CATEGORIES),
     hidden: all.slice(FREE_VISIBLE_CATEGORIES),
   }
 })
 
-const recommendations = computed(() => plan.value?.recommendations || [])
+const recommendations = computed(() => {
+  const all = plan.value?.recommendations || []
+  if (subStore.canViewFull) return all
+  return all
+})
+
+// 推荐显示数: free 看 1 条 + 解锁 CTA; paid 看全部
+const visibleRecommendations = computed(() => {
+  const all = recommendations.value
+  if (subStore.canViewFull) return all
+  return all.slice(0, FREE_VISIBLE_RECOMMENDATIONS)
+})
 
 const babySection = computed(() => {
   if (!plan.value?.baby_reserve) return null
   const b = plan.value.baby_reserve
+  // Phase 8: 付费用户看完整, 免费用户只摘要
+  if (subStore.canViewFull) {
+    return {
+      target: b.target,
+      current: b.current,
+      monthlyRequired: b.monthlyRequired,
+      monthsRemaining: b.monthsRemaining,
+      pressureRatio: b.pressureRatio,
+    }
+  }
   return {
     target: b.target,
     current: b.current,
-    monthlyRequired: b.monthlyRequired,
-    monthsRemaining: b.monthsRemaining,
-    pressureRatio: b.pressureRatio,
-    // Free 摘要：仅显示 total + progress，不显示 detailed plan
     summary: `推荐储备 ¥${b.target.toLocaleString('en-US')}，当前已存 ¥${b.current.toLocaleString('en-US')}`,
   }
 })
@@ -75,9 +105,9 @@ function pct(n) {
   return (n * 100).toFixed(1) + '%'
 }
 
+// Phase 8: 解锁 CTA 跳 paywall, 不再裸跳 full
 function onUnlock() {
-  // Phase 5: 跳到完整版（待 Phase 8 接支付后改为付费引导）
-  uni.redirectTo({ url: '/subpackages/report/full' })
+  uni.navigateTo({ url: '/pages/paywall/index?from=preview' })
 }
 
 function onActivate() {
@@ -182,11 +212,11 @@ function onActivate() {
         <view v-if="recommendations.length" class="report-section">
           <text class="section-title">优化建议</text>
           <view class="rec-list">
-            <view v-for="(r, i) in recommendations.slice(0, FREE_VISIBLE_RECOMMENDATIONS)" :key="i" class="rec-card">
+            <view v-for="(r, i) in visibleRecommendations" :key="i" class="rec-card">
               <text class="rec-title">{{ r.title || '建议 ' + (i+1) }}</text>
               <text class="rec-desc">{{ r.description || r.text || '' }}</text>
             </view>
-            <view v-if="recommendations.length > FREE_VISIBLE_RECOMMENDATIONS" class="unlock-cta" @tap="onUnlock">
+            <view v-if="!subStore.canViewFull && recommendations.length > FREE_VISIBLE_RECOMMENDATIONS" class="unlock-cta" @tap="onUnlock">
               <text>🔒 解锁全部 {{ recommendations.length }} 条建议</text>
             </view>
           </view>

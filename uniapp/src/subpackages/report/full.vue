@@ -1,18 +1,40 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onShow } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import ScoreRing from '@/components/ScoreRing.vue'
 import { ensureAndActivate } from '@/services/api'
+import { useSubscriptionStore } from '@/stores/subscription'
 
 const loading = ref(true)
 const errorMsg = ref('')
 const plan = ref(null)
 const recStatus = ref({}) // { recId: 'accepted' | 'later' | 'ignored' }
+const subStore = useSubscriptionStore()
 
-onMounted(() => {
+async function loadPlan() {
+  // 优先从 plan store / 云端拉 (Phase 8: 避免裸读 globalData)
+  // 这里仍保留 globalData fallback 用于新生成但 plan store 尚未 hydrate 的场景
   const app = getApp()
-  plan.value = (app && app.globalData && app.globalData.fullPlanResult) || null
-  if (!plan.value) {
+  // 同步: 优先 globalData (刚生成)
+  const fromGlobal = app && app.globalData && app.globalData.fullPlanResult
+  if (fromGlobal) {
+    plan.value = fromGlobal
+    return true
+  }
+  // 异步: 后续可以从云端 plans.getActive 拉 (本期暂用 localStorage 缓存)
+  try {
+    const cached = uni.getStorageSync('activePlanCache')
+    if (cached && cached._id) {
+      plan.value = cached
+      return true
+    }
+  } catch (e) {}
+  return false
+}
+
+onMounted(async () => {
+  const ok = await loadPlan()
+  if (!ok) {
     errorMsg.value = '未找到规划数据，请回到向导重新生成'
   } else {
     // 从 localStorage 读已采纳状态
@@ -22,6 +44,15 @@ onMounted(() => {
     } catch (e) {}
   }
   loading.value = false
+})
+
+// Phase 8: 每次进入页面强制刷新 entitlement, 防止退订后仍显示完整版
+onShow(async () => {
+  try {
+    await subStore.refresh({ force: true })
+  } catch (e) {
+    // fail-closed: 仍按 free 算
+  }
 })
 
 const riskLabel = computed(() => ({
@@ -75,6 +106,9 @@ function fmtPct(num, denom) {
 function stubTap(title) {
   uni.showToast({ title, icon: 'none' })
 }
+function goPaywall() {
+  uni.navigateTo({ url: '/pages/paywall/index?from=full' })
+}
 function onActivate() {
   // Phase 7: 启用预算追踪 → 看板（无云端 plan 时先补 save）
   uni.showLoading({ title: '启用中...' })
@@ -90,7 +124,34 @@ function onActivate() {
     })
 }
 function onInvite() { stubTap('邀请伴侣 (Phase 10)') }
-function onExportPdf() { stubTap('PDF 导出 (Phase 8)') }
+function onExportPdf() {
+  // Phase 8: 走 utils/pdf.js
+  if (!subStore.canExportPdf) {
+    uni.showToast({ title: 'PDF 导出需 Pro 会员', icon: 'none' })
+    setTimeout(() => uni.navigateTo({ url: '/pages/paywall/index?from=pdf' }), 800)
+    return
+  }
+  import('@/utils/pdf').then(({ exportReportPdf }) => {
+    uni.showLoading({ title: '生成中...' })
+    exportReportPdf(plan.value, { canExportPdf: true })
+      .then(() => {
+        uni.hideLoading()
+      })
+      .catch((e) => {
+        uni.hideLoading()
+        if (e.message === 'NEED_PRO') {
+          uni.showToast({ title: 'PDF 导出需 Pro 会员', icon: 'none' })
+        } else {
+          uni.showToast({ title: e.message || 'PDF 生成失败', icon: 'none' })
+        }
+      })
+  }).catch(() => {
+    uni.showToast({ title: 'PDF 模块加载失败', icon: 'none' })
+  })
+}
+function onShare() {
+  uni.navigateTo({ url: '/subpackages/report/share' })
+}
 </script>
 
 <template>
@@ -103,6 +164,20 @@ function onExportPdf() { stubTap('PDF 导出 (Phase 8)') }
       </template>
       <template v-else-if="errorMsg">
         <text class="error-text">{{ errorMsg }}</text>
+      </template>
+
+      <!-- Phase 8: 锁态屏 — 未付费禁止裸访问 (防绕过) -->
+      <template v-else-if="!subStore.canViewFull">
+        <view class="locked-screen">
+          <text class="lock-icon">🔒</text>
+          <text class="lock-title">完整版规划书需解锁</text>
+          <text class="lock-sub">解锁后可查看 7 类预算明细、全部建议、计算依据、备育完整进度,并支持 PDF 导出</text>
+          <view class="lock-plans">
+            <text class="lock-plan-item">¥19.9 · 单次完整报告 (7 天 Pro)</text>
+            <text class="lock-plan-item">¥68 · Pro 年付</text>
+          </view>
+          <button class="grad-btn" @tap="goPaywall">立即解锁</button>
+        </view>
       </template>
 
       <template v-else>
@@ -243,6 +318,9 @@ function onExportPdf() { stubTap('PDF 导出 (Phase 8)') }
           <button class="text-link" @tap="onExportPdf">
             导出 PDF
           </button>
+          <button class="text-link" @tap="onShare">
+            分享长图
+          </button>
         </view>
       </template>
     </view>
@@ -333,4 +411,16 @@ function onExportPdf() { stubTap('PDF 导出 (Phase 8)') }
 .btn-ignore { background: transparent; color: var(--color-text-2); border: 1rpx solid rgba(0,0,0,0.1); }
 .btn-mini::after { border: none; }
 .loading-text, .error-text { padding: 48rpx; text-align: center; color: var(--color-text-2); }
+.locked-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 96rpx 48rpx 48rpx;
+  text-align: center;
+}
+.lock-icon { font-size: 80rpx; margin-bottom: 24rpx; }
+.lock-title { display: block; font-size: 36rpx; font-weight: 700; margin-bottom: 16rpx; color: var(--color-text); }
+.lock-sub { display: block; font-size: 26rpx; color: var(--color-text-2); line-height: 1.6; margin-bottom: 32rpx; }
+.lock-plans { margin-bottom: 32rpx; }
+.lock-plan-item { display: block; font-size: 28rpx; color: #FF6B8A; font-weight: 600; margin: 8rpx 0; }
 </style>
