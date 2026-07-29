@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import engineClient from '@/utils/engineClient'
 import { usePlanStore } from '@/stores/plan'
+import { useSubscriptionStore } from '@/stores/subscription'
 
 const loading = ref(false)
 const errorMsg = ref('')
@@ -25,6 +26,23 @@ async function onWechatLogin() {
 
     // 跳到 preview 或 home/empty
     const planStore = usePlanStore()
+    const subStore = useSubscriptionStore()
+    // Phase 8: 直接用 bootstrap 响应 hydrate subscription, 避免登录后重复请求
+    if (profile.subscription) {
+      subStore.hydrate({
+        subscription: profile.subscription,
+        effective_plan_type: profile.subscription.effective_plan_type || profile.subscription.plan_type,
+        entitlements: profile.subscription.entitlements || {
+          canViewFull: ['pro_yearly', 'pro_family', 'report_once'].includes(profile.subscription.plan_type)
+            && (!profile.subscription.expires_at || profile.subscription.expires_at > Date.now()),
+          canExportPdf: ['pro_yearly', 'pro_family', 'report_once'].includes(profile.subscription.plan_type)
+            && (!profile.subscription.expires_at || profile.subscription.expires_at > Date.now()),
+          canShareFree: true,
+          daysRemaining: null,
+        },
+        server_now: Date.now(),
+      })
+    }
     if (profile.activePlan) {
       getApp().globalData.fullPlanResult = profile.activePlan
       planStore.activePlan = profile.activePlan

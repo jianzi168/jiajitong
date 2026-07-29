@@ -72,6 +72,12 @@ export const getCurrentWeekly = wrap('weekly.getCurrent')
 export const submitWeekly     = wrap('weekly.submit')
 export const copyLastWeek     = wrap('weekly.copyLastWeek')
 
+// Phase 8 商业化
+export const createOrder     = wrap('orders.create')
+export const mockPayOrder    = wrap('orders.mockPay')
+export const getSubscription = wrap('subscription.get')
+export const getShareQrCode  = wrap('share.getQrCode')
+
 export default {
   getActivePlan,
   activatePlan,
@@ -80,4 +86,9 @@ export default {
   getCurrentWeekly,
   submitWeekly,
   copyLastWeek,
+  // Phase 8
+  createOrder,
+  mockPayOrder,
+  getSubscription,
+  getShareQrCode,
 }
