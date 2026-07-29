@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, onShow } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import NavBar from '@/components/NavBar.vue'
 import { usePlanStore } from '@/stores/plan'
 import { useSubscriptionStore } from '@/stores/subscription'
