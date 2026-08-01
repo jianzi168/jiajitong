@@ -159,17 +159,40 @@ describe('T8-3 report_once → mockPay → subscription.get', () => {
   })
 })
 
-// ---------- T8-4: 重复调 mockPay → 40901 ----------
-describe('T8-4 重复调 orders.mockPay', () => {
-  test('已 paid 再次 mockPay → 40901', async () => {
+// ---------- T8-4: 终态订单 mockPay → 40901 ----------
+/**
+ * Phase 8.1 变更: 重复支付同一订单不再返回 40901, 而是幂等返回同一权益 (见 T8-15b)。
+ * 40901 现在只保留给真正的终态订单 (cancelled / refunded), 它们永远不该发放权益。
+ */
+describe('T8-4 终态订单 orders.mockPay', () => {
+  test('cancelled 订单 mockPay → 40901', async () => {
     const openid = 't8_4_openid'
     await bootstrapFamily(openid)
-    const created = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L167' } }, makeCtx(openid))
-    const order = ok(created).order
-    await dispatch({ action: 'orders.mockPay', payload: { order_id: order._id } }, makeCtx(openid))
-    // 第二次
-    const r2 = await dispatch({ action: 'orders.mockPay', payload: { order_id: order._id } }, makeCtx(openid))
-    fail(r2, 40901)
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const seeded = handlers._seedOrder({
+      openid, family_id: 'fam_' + openid, sku: 'report_once', amount_fen: 1990,
+      status: 'cancelled', pay_channel: 'mock', paid_at: null,
+      created_at: Date.now(), updated_at: Date.now(),
+    })
+    const r = await dispatch({ action: 'orders.mockPay', payload: { order_id: seeded._id } }, makeCtx(openid))
+    fail(r, 40901)
+
+    // 不得因此发放权益
+    const sub = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openid)))
+    assert.equal(sub.effective_plan_type, 'free')
+  })
+
+  test('refunded 订单 mockPay → 40901', async () => {
+    const openid = 't8_4b_openid'
+    await bootstrapFamily(openid)
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const seeded = handlers._seedOrder({
+      openid, family_id: 'fam_' + openid, sku: 'pro_yearly', amount_fen: 6800,
+      status: 'refunded', pay_channel: 'mock', paid_at: Date.now() - 1000,
+      created_at: Date.now(), updated_at: Date.now(),
+    })
+    const r = await dispatch({ action: 'orders.mockPay', payload: { order_id: seeded._id } }, makeCtx(openid))
+    fail(r, 40901)
   })
 })
 
@@ -492,5 +515,160 @@ describe('T8-14c orders.create 响应裁剪', () => {
     const d = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_dto_003' } }, makeCtx(openid)))
     const paid = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: d.order._id } }, makeCtx(openid)))
     assert.equal(paid.subscription.plan_type, 'report_once')
+  })
+})
+
+// ---------- T8-15: mock 结算可恢复 / 幂等 (Phase 8.1) ----------
+/**
+ * settlePaidOrder 边界: 一笔订单最多发放一次权益, 但网络重试/权益丢失时可恢复。
+ * 关键不变量: 重放绝不能用重试时的墙钟时间重算 expires_at, 否则一次重试就白送一个周期。
+ */
+describe('T8-15 mockPay 结算幂等与恢复', () => {
+  test('T8-15 首次 mockPay 发放权益, expires_at = paid_at + 7d', async () => {
+    const openid = 't8_15_openid'
+    await bootstrapFamily(openid)
+    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_settle_001' } }, makeCtx(openid)))
+    const paid = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openid)))
+
+    assert.equal(paid.subscription.plan_type, 'report_once')
+    assert.equal(paid.subscription.source_order_id, c.order._id)
+    assert.equal(paid.subscription.entitlements.canViewFull, true)
+
+    // 订单已落 paid_at, expires_at 必须从它推导
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const order = handlers._allOrders().find((o) => o._id === c.order._id)
+    assert.equal(order.status, 'paid')
+    assert.ok(order.paid_at > 0, 'paid_at 应已写入')
+    assert.equal(paid.subscription.expires_at, order.paid_at + 7 * 86400000)
+  })
+
+  test('T8-15b 重复 mockPay → 同一 subscription, expires_at 不变', async () => {
+    const openid = 't8_15b_openid'
+    await bootstrapFamily(openid)
+    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_settle_002' } }, makeCtx(openid)))
+    const first = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openid)))
+
+    await new Promise((r) => setTimeout(r, 15))
+    const second = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openid)))
+
+    assert.equal(second.subscription.expires_at, first.subscription.expires_at, '重试不得延长有效期')
+    assert.equal(second.subscription.started_at, first.subscription.started_at)
+    assert.equal(second.subscription.source_order_id, c.order._id)
+    assert.equal(second.subscription.plan_type, 'pro_yearly')
+
+    // 底层只应有一条订阅, 且和第一次读到的一致
+    const sub = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openid)))
+    assert.equal(sub.subscription.expires_at, first.subscription.expires_at)
+  })
+
+  test('T8-15c 订阅丢失后重试 → 用订单原始 paid_at 重建同样的 expires_at', async () => {
+    const openid = 't8_15c_openid'
+    await bootstrapFamily(openid)
+    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_settle_003' } }, makeCtx(openid)))
+    const first = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openid)))
+
+    // 模拟"订单已 paid 但订阅写失败/被删": 清空订阅表
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    handlers._clearSubscriptions()
+    const gone = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openid)))
+    assert.equal(gone.effective_plan_type, 'free', '前置条件: 订阅确实已丢失')
+
+    await new Promise((r) => setTimeout(r, 15))
+    const repaired = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openid)))
+
+    assert.equal(repaired.subscription.plan_type, 'pro_yearly')
+    assert.equal(repaired.subscription.source_order_id, c.order._id)
+    assert.equal(
+      repaired.subscription.expires_at, first.subscription.expires_at,
+      '恢复必须用订单原始 paid_at, 不能用重试时的墙钟',
+    )
+    assert.equal(repaired.subscription.entitlements.canViewFull, true)
+
+    // subscription.get 也能真读到
+    const sub = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openid)))
+    assert.equal(sub.effective_plan_type, 'pro_yearly')
+    assert.equal(sub.subscription.expires_at, first.subscription.expires_at)
+  })
+
+  test('T8-15c2 subscription.get 懒写的 free 记录不算命中, 仍会修复', async () => {
+    const openid = 't8_15c2_openid'
+    await bootstrapFamily(openid)
+    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_settle_004' } }, makeCtx(openid)))
+    const first = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openid)))
+
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    handlers._clearSubscriptions()
+    // 订阅丢失后前端先调了一次 subscription.get → 懒写了一条 free 记录
+    ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openid)))
+
+    const repaired = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openid)))
+    assert.equal(repaired.subscription.plan_type, 'report_once')
+    assert.equal(repaired.subscription.expires_at, first.subscription.expires_at)
+  })
+
+  test('T8-15d 他人订单 mockPay → 40301, 且不发放权益', async () => {
+    const openidA = 't8_15d_A'
+    const openidB = 't8_15d_B'
+    await bootstrapFamily(openidA)
+    await bootstrapFamily(openidB)
+    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_settle_005' } }, makeCtx(openidA)))
+
+    const r = await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openidB))
+    fail(r, 40301)
+
+    // B 不得因此拿到权益; A 的订单也不得被置 paid
+    const subB = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openidB)))
+    assert.equal(subB.effective_plan_type, 'free')
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const order = handlers._allOrders().find((o) => o._id === c.order._id)
+    assert.equal(order.status, 'pending', '越权调用不得改变订单状态')
+  })
+
+  test('T8-15d2 订单已 paid 时他人重试同样 40301', async () => {
+    const openidA = 't8_15d2_A'
+    const openidB = 't8_15d2_B'
+    await bootstrapFamily(openidA)
+    await bootstrapFamily(openidB)
+    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_settle_006' } }, makeCtx(openidA)))
+    ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openidA)))
+
+    const r = await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openidB))
+    fail(r, 40301)
+
+    const subB = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openidB)))
+    assert.equal(subB.effective_plan_type, 'free')
+  })
+
+  test('T8-15e 重试不影响后续真实续费', async () => {
+    const openid = 't8_15e_openid'
+    await bootstrapFamily(openid)
+    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_settle_007' } }, makeCtx(openid)))
+    const p1 = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c1.order._id } }, makeCtx(openid)))
+    // 重放一次(不该有任何效果)
+    ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c1.order._id } }, makeCtx(openid)))
+
+    const c2 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_settle_008' } }, makeCtx(openid)))
+    const p2 = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c2.order._id } }, makeCtx(openid)))
+
+    assert.equal(p2.subscription.expires_at, p1.subscription.expires_at + 365 * 86400000)
+    assert.equal(p2.subscription.source_order_id, c2.order._id)
+  })
+
+  test('T8-15f 续期后重放旧订单不得再叠一个周期', async () => {
+    const openid = 't8_15f_openid'
+    await bootstrapFamily(openid)
+    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_settle_009' } }, makeCtx(openid)))
+    ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c1.order._id } }, makeCtx(openid)))
+    const c2 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_settle_010' } }, makeCtx(openid)))
+    const p2 = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c2.order._id } }, makeCtx(openid)))
+
+    // 一户一份: 订阅现在指向 c2, 已不存在 source_order_id=c1 的记录。
+    // 此时 c1 的陈旧重试若走"补发"分支, 就会在 c2 的到期日上再叠 365 天。
+    const replay = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c1.order._id } }, makeCtx(openid)))
+    assert.equal(replay.subscription.expires_at, p2.subscription.expires_at, '重放旧订单不得延长有效期')
+
+    const sub = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openid)))
+    assert.equal(sub.subscription.expires_at, p2.subscription.expires_at)
+    assert.equal(sub.subscription.source_order_id, c2.order._id, '订阅仍应指向最新订单')
   })
 })

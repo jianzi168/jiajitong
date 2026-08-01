@@ -807,6 +807,189 @@ async function ordersCreate(ctx, payload) {
   return ordersCreateOk(order)
 }
 
+// ---------- 结算边界 (Phase 8.1) ----------
+/**
+ * 终态订单: 永远不该由结算发放权益 (已取消 / 已退款)
+ */
+const ORDER_TERMINAL_STATUS = ['cancelled', 'refunded']
+
+/** 从 memoryStore 找该订单发放过的订阅 */
+function findMemorySubscriptionBySourceOrder(orderId) {
+  if (!orderId) return null
+  for (const [, v] of memoryStore.subscriptions) {
+    if (v && v.source_order_id === orderId) return v
+  }
+  return null
+}
+
+/** 订阅 → 对外 DTO (带实时 entitlements) */
+function subscriptionSettleDto(sub, now) {
+  return {
+    plan_type: sub.plan_type,
+    expires_at: sub.expires_at || null,
+    started_at: sub.started_at || null,
+    source_order_id: sub.source_order_id || null,
+    entitlements: calcEntitlements(sub.plan_type, sub.expires_at || null, now),
+  }
+}
+
+/**
+ * 结算一笔已支付订单 → 发放/恢复权益。
+ *
+ * 与 Mock 无关的纯结算边界: 后续真实 payNotify 回调可以直接复用,
+ * 只需换 channel / transactionId, 不必重写权益逻辑。
+ *
+ * 三条路径:
+ *   1. pending          → 置 paid(用 paidAt), 按 computeExpiresAt 发放
+ *   2. paid + 已有订阅   → 原样返回, 绝不重算 (幂等重试)
+ *   3. paid + 订阅缺失   → 用订单原始 paid_at 补发, 而不是重试时的墙钟时间
+ *
+ * 路径 3 是关键: 若用重试时间重算, 一次重试就白送用户一个完整周期。
+ *
+ * @param {object}  order         订单文档 (调用方已确认存在)
+ * @param {object}  user          结算发起人 (需与订单同属一人/一户)
+ * @param {string}  channel       支付渠道 ('mock' | 'wxpay')
+ * @param {string}  transactionId 渠道流水号
+ * @param {number}  paidAt        本次结算时间; 订单已有 paid_at 时以订单为准
+ * @returns {{ ok: true, order, subscription } | { ok: false, error }}
+ */
+async function settlePaidOrder({ order, user, channel = 'mock', transactionId = null, paidAt }) {
+  if (!order || !order._id) {
+    return { ok: false, error: fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '订单不存在') }
+  }
+  if (!user || !user.openid) {
+    return { ok: false, error: fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录') }
+  }
+
+  // 越权守卫: 订单必须同时属于该 openid 与该 family。
+  // 放在结算内部而不是只在 handler 里, 是为了让未来的回调路径也拿到同一道闸。
+  if (order.openid !== user.openid ||
+      (order.family_id && user.family_id && order.family_id !== user.family_id)) {
+    return { ok: false, error: fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '订单不属于当前用户') }
+  }
+
+  // 终态订单不发权益, 也不"静默当作已支付"
+  if (ORDER_TERMINAL_STATUS.includes(order.status)) {
+    return {
+      ok: false,
+      error: fail(ERROR_CODE.ORDER_STATUS_INVALID, 'ORDER_STATUS_INVALID', `订单已是 ${order.status} 状态`),
+    }
+  }
+  if (order.status !== 'pending' && order.status !== 'paid') {
+    return {
+      ok: false,
+      error: fail(ERROR_CODE.ORDER_STATUS_INVALID, 'ORDER_STATUS_INVALID', `订单状态 ${order.status} 无法结算`),
+    }
+  }
+
+  const sku = SKU_CATALOG[order.sku]
+  if (!sku) {
+    return { ok: false, error: fail(ERROR_CODE.INVALID_SKU, 'INVALID_SKU', '订单 SKU 已下线') }
+  }
+
+  const orderId = order._id
+  const familyId = user.family_id
+  const nowWall = Date.now()
+
+  // 已支付订单: 若权益已发放过, 原样返回 —— 这是重试幂等的唯一出口
+  if (order.status === 'paid') {
+    const granted = usingCloudDb
+      ? await db.getSubscriptionBySourceOrder(orderId)
+      : findMemorySubscriptionBySourceOrder(orderId)
+    if (granted) {
+      return {
+        ok: true,
+        order,
+        subscription: subscriptionSettleDto(granted, nowWall),
+      }
+    }
+
+    // 没有指向本订单的订阅, 有两种可能, 必须区分:
+    //   a) 权益写失败/被删 → 用户当前没有有效权益 → 补发
+    //   b) 后续订单已续期, 一户一份的订阅被改写成指向新订单 → 用户权益完好
+    // 若把 b) 也当成补发, 一次陈旧重试就会在现有到期日上再叠一个周期(白送)。
+    // 判据: 用户此刻是否已有未过期的付费订阅。有 → 原样返回, 不重算。
+    const { subscription: existing } = await subscriptionGetEffective(familyId)
+    if (existing && existing.plan_type !== 'free' &&
+        existing.expires_at && existing.expires_at > nowWall) {
+      return {
+        ok: true,
+        order,
+        subscription: subscriptionSettleDto(existing, nowWall),
+      }
+    }
+    // 落到这里 = 订单已 paid 但权益确实缺失, 走下面的补发
+  }
+
+  // 结算基准时间: 订单已有 paid_at 就以它为准, 保证重放算出同一个 expires_at
+  const settledAt = (typeof order.paid_at === 'number' && order.paid_at > 0)
+    ? order.paid_at
+    : ((typeof paidAt === 'number' && paidAt > 0) ? paidAt : nowWall)
+
+  // pending → paid
+  if (order.status === 'pending') {
+    if (usingCloudDb) {
+      const marked = await db.markOrderPaid({
+        orderId, channel, transactionId, paidAt: settledAt,
+      })
+      if (!marked.ok) {
+        // 并发下另一路已置 paid: 回读后重入, 由上面的"已发放"分支收口
+        const fresh = await db.getOrder(orderId, user.openid)
+        if (fresh && fresh.status !== 'pending') {
+          return settlePaidOrder({ order: fresh, user, channel, transactionId, paidAt: fresh.paid_at })
+        }
+      }
+    } else {
+      order.status = 'paid'
+      order.pay_channel = channel
+      order.wx_transaction_id = transactionId
+      order.paid_at = settledAt
+      order.updated_at = nowWall
+    }
+  }
+
+  // 计算并写入权益。
+  // 补发场景(订单早已 paid)同样走这里, 但 now 传的是 settledAt 而非墙钟,
+  // 于是 computeExpiresAt 复现出与首次结算完全一致的 expires_at。
+  const { subscription: currentSub } = await subscriptionGetEffective(familyId)
+  // 懒写的 free 占位不参与续期计算, 否则补发会被当成"首购"以外的分支干扰
+  const baseSub = currentSub && currentSub.plan_type !== 'free' ? currentSub : null
+  const expires_at = computeExpiresAt(order, baseSub, settledAt)
+  const plan_type = sku.plan_type
+  const started_at = baseSub ? (baseSub.started_at || settledAt) : settledAt
+
+  let newSub
+  if (usingCloudDb) {
+    newSub = await db.upsertSubscription({
+      familyId, openid: user.openid, plan_type, started_at, expires_at,
+      source_order_id: orderId,
+    })
+  } else {
+    // 一户一份: 删旧
+    for (const [k, v] of memoryStore.subscriptions) {
+      if (v && v.family_id === familyId) memoryStore.subscriptions.delete(k)
+    }
+    const id = 'sub_' + nowWall + '_' + Math.random().toString(36).slice(2, 6)
+    newSub = {
+      _id: id, family_id: familyId, openid: user.openid,
+      plan_type, started_at, expires_at, source_order_id: orderId,
+      created_at: nowWall, updated_at: nowWall,
+    }
+    memoryStore.subscriptions.set(id, newSub)
+  }
+
+  // 重读订单返回最新状态
+  const updatedOrder = usingCloudDb
+    ? await db.getOrder(orderId, user.openid)
+    : memoryStore.orders.get(orderId)
+
+  return {
+    ok: true,
+    order: updatedOrder || order,
+    subscription: subscriptionSettleDto(newSub, nowWall),
+  }
+}
+
 // ---------- orders.mockPay ----------
 async function ordersMockPay(ctx, payload) {
   if (!ctx || !ctx.openid) {
@@ -830,7 +1013,7 @@ async function ordersMockPay(ctx, payload) {
     if (user.role !== 'owner') return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '需要 owner 权限')
   }
 
-  // 读订单 + 校验归属
+  // 读订单 (归属校验统一由 settlePaidOrder 兜底)
   let order
   if (usingCloudDb) {
     order = await db.getOrder(order_id, openid)
@@ -838,69 +1021,22 @@ async function ordersMockPay(ctx, payload) {
   } else {
     const o = memoryStore.orders.get(order_id)
     if (!o) return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '订单不存在')
-    if (o.openid !== openid) return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '订单不属于当前用户')
     order = o
   }
 
-  if (order.status !== 'pending') {
-    return fail(ERROR_CODE.ORDER_STATUS_INVALID, 'ORDER_STATUS_INVALID', `订单已是 ${order.status} 状态`)
-  }
-
-  const now = Date.now()
-
-  // 置 paid
-  if (usingCloudDb) {
-    await db.markOrderPaid({ orderId: order_id, channel: 'mock', transactionId: 'MOCK_' + order_id })
-  } else {
-    order.status = 'paid'
-    order.pay_channel = 'mock'
-    order.wx_transaction_id = 'MOCK_' + order_id
-    order.paid_at = now
-    order.updated_at = now
-  }
-
-  // upsert subscription
-  const { subscription: currentSub } = await subscriptionGetEffective(user.family_id)
-  const expires_at = computeExpiresAt(order, currentSub, now)
-  const plan_type = SKU_CATALOG[order.sku].plan_type
-  const started_at = currentSub ? (currentSub.started_at || now) : now
-
-  let newSub
-  if (usingCloudDb) {
-    newSub = await db.upsertSubscription({
-      familyId: user.family_id, openid, plan_type, started_at, expires_at,
-      source_order_id: order_id,
-    })
-  } else {
-    newSub = {
-      family_id: user.family_id, openid, plan_type, started_at, expires_at,
-      source_order_id: order_id, updated_at: now,
-    }
-    // 一户一份: 删旧
-    for (const [k, v] of memoryStore.subscriptions) {
-      if (v && v.family_id === user.family_id) memoryStore.subscriptions.delete(k)
-    }
-    newSub._id = 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
-    newSub.created_at = now
-    memoryStore.subscriptions.set(newSub._id, newSub)
-  }
-
-  const entitlements = calcEntitlements(plan_type, expires_at, now)
-
-  // 重读订单返回最新
-  const updatedOrder = usingCloudDb
-    ? await db.getOrder(order_id, openid)
-    : memoryStore.orders.get(order_id)
+  // 首次结算用当前时间; 重试时 order.paid_at 已存在, settlePaidOrder 会优先用它
+  const settled = await settlePaidOrder({
+    order,
+    user: { openid, family_id: user.family_id },
+    channel: 'mock',
+    transactionId: 'MOCK_' + order_id,
+    paidAt: Date.now(),
+  })
+  if (!settled.ok) return settled.error
 
   return ok({
-    order: updatedOrder,
-    subscription: {
-      plan_type,
-      expires_at,
-      started_at,
-      source_order_id: order_id,
-      entitlements,
-    },
+    order: settled.order,
+    subscription: settled.subscription,
   })
 }
 
@@ -995,6 +1131,8 @@ module.exports = {
   calcEntitlements,
   computeExpiresAt,
   SKU_CATALOG,
+  // 结算边界: 后续真实支付回调 (payNotify) 复用同一入口, 不再重写权益逻辑
+  settlePaidOrder,
   _resetMemory() {
     memoryStore.users.clear()
     memoryStore.families.clear()
@@ -1026,5 +1164,9 @@ module.exports = {
   /** 测试用: 列出 memoryStore 里的全部订单(断言"只落了一条") */
   _allOrders() {
     return Array.from(memoryStore.orders.values())
+  },
+  /** 测试用: 只清订阅表, 模拟"订单已 paid 但权益丢失" */
+  _clearSubscriptions() {
+    memoryStore.subscriptions.clear()
   },
 }

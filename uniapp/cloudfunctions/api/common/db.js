@@ -189,6 +189,17 @@ async function getSubscriptionByFamily(familyId) {
 }
 
 /**
+ * 按 source_order_id 读订阅(结算幂等判定用)
+ * 命中说明该订单的权益已经发放过, 调用方必须原样返回而不是重算 expires_at
+ */
+async function getSubscriptionBySourceOrder(orderId) {
+  if (!orderId) return null
+  const db = getDB()
+  const { data } = await db.collection('subscriptions').where({ source_order_id: orderId }).limit(1).get()
+  return (data && data[0]) || null
+}
+
+/**
  * upsert 订阅(按 family_id 业务主键)
  * 一户一份, 覆盖式写; 旧 plan_type 信息丢失由 entitlements 重算补偿
  */
@@ -314,21 +325,29 @@ async function getOrder(orderId, openid) {
 
 /**
  * 置订单为 paid; 写 paid_at + wx_transaction_id + updated_at
+ *
+ * 条件更新: 只有仍处于 pending 的订单会被改写 (where 而非 doc().update()),
+ * 并发重试/支付回调与 mockPay 同时到达时, 只有一方的 paid_at 生效,
+ * 另一方拿到 updated=0 → 调用方回读订单走"已支付"分支, 不会二次发放权益。
+ *
+ * @param {number} [paidAt] 结算时间; 省略则取当前时间。回调补单时必须传原始支付时间。
+ * @returns {{ ok: boolean, updated: number, paid_at: number }}
  */
-async function markOrderPaid({ orderId, channel, transactionId }) {
+async function markOrderPaid({ orderId, channel, transactionId, paidAt }) {
   if (!orderId) throw new Error('markOrderPaid: orderId 必填')
   const db = getDB()
-  const now_ = Date.now()
-  await db.collection('orders').doc(orderId).update({
+  const now_ = typeof paidAt === 'number' && paidAt > 0 ? paidAt : Date.now()
+  const res = await db.collection('orders').where({ _id: orderId, status: 'pending' }).update({
     data: {
       status: 'paid',
       pay_channel: channel || 'mock',
       wx_transaction_id: transactionId || null,
       paid_at: now_,
-      updated_at: now_,
+      updated_at: Date.now(),
     }
   })
-  return { ok: true, paid_at: now_ }
+  const updated = (res && res.stats && typeof res.stats.updated === 'number') ? res.stats.updated : 0
+  return { ok: updated > 0, updated, paid_at: now_ }
 }
 
 // ---------- app_config ----------
@@ -460,6 +479,7 @@ module.exports = {
   getSubscriptionByFamily,
   upsertSubscription,
   getActiveSubscription,
+  getSubscriptionBySourceOrder,
   createOrder,
   getOrder,
   getOrderByClientRequest,
