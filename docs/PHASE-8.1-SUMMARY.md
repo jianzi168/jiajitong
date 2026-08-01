@@ -1,7 +1,7 @@
 # Phase 8.1 商业化硬化 — 收口记录
 
 > 分支: `feature/phase-8-commercialization`
-> 基线: `5afcf9e` (Task 6)
+> 基线: `384d48fe` (main)，父提交: `5afcf9e` (Task 6)
 > 收口提交: Task 7 (本文件)
 > 设计: `docs/PHASE-8.1-HARDENING-PLAN.md`
 > 任务卡: `.superpowers/sdd/2026-08-01-phase-8-1-commercialization-hardening/task-*.md`

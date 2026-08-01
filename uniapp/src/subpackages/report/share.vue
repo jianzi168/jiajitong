@@ -73,14 +73,6 @@ const shareModel = computed(() => {
 })
 
 // 重新渲染 (响应 hideRatios 切换)
-const drawTick = ref(0)
-watchHideRatios()
-
-function watchHideRatios() {
-  // 简单 watch 替代 (避免引入 watch)
-  // 当 hideRatios 变化, redraw
-}
-
 async function redraw() {
   if (!shareModel.value) return
   await drawSharePoster({
@@ -88,7 +80,6 @@ async function redraw() {
     model: shareModel.value,
     qrImage: qrImage.value,
   })
-  drawTick.value++
 }
 
 const onToggleRatios = () => {
