@@ -1,5 +1,6 @@
 <script setup>
 import NavBar from '@/components/NavBar.vue'
+import { UNAVAILABLE_COPY } from '@/utils/featureAvailability.js'
 
 const items = [
   { key: 'pdf', label: '导出规划书 PDF', danger: false },
@@ -17,12 +18,12 @@ function onItem(item) {
       confirmColor: '#DC2626',
       success: (res) => {
         if (res.confirm) {
-          uni.showToast({ title: '已提交注销申请', icon: 'none' })
+          uni.showToast({ title: UNAVAILABLE_COPY.delete, icon: 'none' })
         }
       }
     })
   } else {
-    uni.showToast({ title: '待接入：' + item.label, icon: 'none' })
+    uni.showToast({ title: UNAVAILABLE_COPY[item.key] || ('待接入：' + item.label), icon: 'none' })
   }
 }
 </script>

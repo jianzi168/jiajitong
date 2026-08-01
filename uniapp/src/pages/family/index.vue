@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import NavBar from '@/components/NavBar.vue'
+import { UNAVAILABLE_COPY } from '@/utils/featureAvailability.js'
 
 const familyName = ref('晓雯的家庭')
 const city = ref('上海')
@@ -66,15 +67,8 @@ function onSave() {
     uni.showToast({ title: '没有可保存的修改', icon: 'none' })
     return
   }
-  uni.showLoading({ title: '保存中…' })
-  setTimeout(() => {
-    uni.hideLoading()
-    uni.showToast({ title: '已保存', icon: 'success' })
-    original.familyName = familyName.value
-    original.city = city.value
-    original.stage = stage.value
-    isDirty.value = false
-  }, 600)
+  uni.showToast({ title: UNAVAILABLE_COPY.familySave, icon: 'none' })
+  isDirty.value = false
 }
 </script>
 

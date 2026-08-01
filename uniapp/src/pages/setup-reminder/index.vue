@@ -1,5 +1,6 @@
 <script setup>
 import NavBar from '@/components/NavBar.vue'
+import { isSubscribeConfigured, UNAVAILABLE_COPY } from '@/utils/featureAvailability.js'
 
 // Phase 7: 接真实订阅授权引导
 // 真实模板 ID 需在小程序后台申请后填入 (留 P1 推服务端)
@@ -7,6 +8,10 @@ import NavBar from '@/components/NavBar.vue'
 const tmplIds = []
 
 function onSubscribe() {
+  if (!isSubscribeConfigured(tmplIds)) {
+    uni.showToast({ title: UNAVAILABLE_COPY.subscribe, icon: 'none' })
+    return
+  }
   // #ifdef MP-WEIXIN
   if (typeof uni === 'undefined' || !uni.requestSubscribeMessage) {
     uni.showToast({ title: '当前环境不支持订阅消息', icon: 'none' })
