@@ -337,3 +337,37 @@ describe('T8-bonus Pro 购买单次报告', () => {
     fail(r, 40921)
   })
 })
+
+// ---------- T8-13: share.getQrCode 云端 wxacode + 上传 ----------
+/**
+ * 用子进程跑云端测试, 避免污染主进程的 require.cache / usingCloudDb 捕获。
+ * 进程内若替换 wx-server-sdk + 重载 handlers, 会让同进程内的其它测试
+ * (T8-5 通过 require 取 handlers 写 memoryStore) 与 dispatch (旧绑定) 分离,
+ * T8-5 会出现 "subscriptions 找不到" 的伪 fail。
+ * 子进程天然隔离 — 主进程的 handlers 仍保持 usingCloudDb=false。
+ */
+describe('T8-13 share.getQrCode 云端 wxacode + upload (子进程)', () => {
+  test('cloud: getUnlimited → uploadFile → file_id = cloud://.../test.png', () => {
+    const { spawnSync } = require('child_process')
+    const path = require('path')
+
+    const driverPath = path.join(__dirname, '_share_qr_cloud_driver.js')
+    const probePayload = Buffer.from('PROBE').toString('base64')
+    const child = spawnSync(process.execPath, [driverPath], {
+      env: { ...process.env, SHARE_QR_CLOUD_PROBE: '1' },
+      encoding: 'utf8',
+    })
+    const out = (child.stdout || '').trim()
+    if (out.startsWith('FAIL:')) {
+      throw new Error(out.slice(5).trim())
+    }
+    const result = JSON.parse(out)
+    assert.equal(result.mode, 'wxacode')
+    assert.equal(result.file_id, 'cloud://share-qrcodes/test.png')
+    assert.equal(result.temp_url, '')
+    assert.equal(result.page, 'pages/landing/index')
+    assert.equal(result.scene, 'from=poster')
+    assert.equal(result.cloudPath, 'share-qrcodes/landing-v1.png')
+    assert.equal(result.uploadCalls, 1)
+  })
+})

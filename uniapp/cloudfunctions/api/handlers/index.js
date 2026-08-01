@@ -878,10 +878,24 @@ async function shareGetQrCode(ctx, payload) {
       page: page_path,
       width: 280,
     })
+    // 派生确定性的版本化云端路径 (例如 pages/landing/index → share-qrcodes/landing-v1.png)
+    const pathSegments = page_path.split('/').filter(Boolean)
+    const lastSeg = pathSegments[pathSegments.length - 1] || ''
+    const stem =
+      pathSegments.length > 1 && lastSeg === 'index'
+        ? pathSegments[pathSegments.length - 2]
+        : lastSeg || 'page'
+    const cloudPath = `share-qrcodes/${stem}-v1.png`
+
+    const uploadRes = await cloud.uploadFile({
+      cloudPath,
+      fileContent: qrRes.buffer,
+    })
+
     return ok({
       mode: 'wxacode',
-      file_id: '',
-      temp_url: qrRes.buffer || '',
+      file_id: uploadRes.fileID || '',
+      temp_url: '',
       page: page_path,
       scene: 'from=poster',
     })
