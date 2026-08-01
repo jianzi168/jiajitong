@@ -1,10 +1,11 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import { usePlanStore } from '@/stores/plan'
 import { useSubscriptionStore } from '@/stores/subscription'
 import { getShareQrCode } from '@/services/api'
 import { buildShareModel, drawSharePoster } from '@/utils/poster'
+import { resolveQrImage } from '@/utils/shareQr'
 
 const planStore = usePlanStore()
 const subStore = useSubscriptionStore()
@@ -31,11 +32,26 @@ onMounted(async () => {
     plan.value = planStore.activePlan
   }
 
-  // 2. 拉小程序码
+  // 2. 拉小程序码 + 适配下载
   try {
     const qr = await getShareQrCode({ page_path: 'pages/landing/index' })
-    // 留接口: P1 缓存时把 temp_url 转 tempFilePath 后赋值给 qrImage
-    // 当前 placeholder 模式不画
+    if (qr && qr.file_id) {
+      try {
+        qrImage.value = await resolveQrImage(qr, (fileID) => {
+          return new Promise((resolve, reject) => {
+            uni.cloud.downloadFile({
+              fileID,
+              success: (res) => resolve(res.tempFilePath || ''),
+              fail: (err) => reject(err),
+            })
+          })
+        })
+      } catch (e) {
+        // fail-quiet: 二维码降级为空, 海报仍生成
+        qrImage.value = ''
+        errorMsg.value = '二维码加载失败, 已使用占位图'
+      }
+    }
   } catch (e) {
     // fail-quiet: 用 placeholder
   }
@@ -44,6 +60,11 @@ onMounted(async () => {
   try { await subStore.refresh() } catch (e) {}
 
   loading.value = false
+
+  // 4. Canvas 首绘: 等待模板挂载后绘制, 避免拿到空 canvas
+  nextTick(() => {
+    setTimeout(() => { redraw() }, 0)
+  })
 })
 
 const shareModel = computed(() => {
