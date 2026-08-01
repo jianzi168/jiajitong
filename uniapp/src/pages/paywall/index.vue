@@ -1,14 +1,20 @@
 <script setup>
 import { ref } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import NavBar from '@/components/NavBar.vue'
 import { useSubscriptionStore } from '@/stores/subscription'
 import { createOrder, mockPayOrder } from '@/services/api'
+import { resolvePaywallRedirect } from '@/utils/paywallRedirect.js'
 
 const subStore = useSubscriptionStore()
 
 const purchasing = ref(false)  // 全局支付中, 锁所有按钮
 const errorMsg = ref('')
+const from = ref('')
+
+onLoad((opts) => {
+  from.value = (opts && opts.from) || ''
+})
 
 // Phase 8: 前端 fallback 价格 (云端 app_config 不可达时使用)
 const FALLBACK_PRICES = {
@@ -75,9 +81,9 @@ async function onPick(sku) {
     await subStore.refresh({ force: true })
     renderBadge()
     uni.showToast({ title: '已开通', icon: 'success' })
-    // 4. 跳回 report/full (来自 preview 的解锁入口)
+    // 4. 跳回原来源页面 (来自 preview/dashboard/actions/share 等入口)
     setTimeout(() => {
-      uni.reLaunch({ url: '/subpackages/report/full' })
+      uni.reLaunch({ url: resolvePaywallRedirect(from.value) })
     }, 600)
   } catch (e) {
     errorMsg.value = e.userHint || e.message || '购买失败'
