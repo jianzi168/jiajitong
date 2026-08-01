@@ -267,7 +267,9 @@ async function plansSave(ctx, payload) {
       if (v && v.family_id === familyId && v.is_active) v.is_active = false
     }
     saved = {
-      _id: 'plan_' + Date.now(),
+      // 同毫秒内两个 family 存 plan 会撞 _id, 后者覆盖前者 → 补随机后缀
+      // (云端 db.savePlan 走 genId 已带随机, 这里只是本地内存路径对齐)
+      _id: 'plan_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
       family_id: familyId,
       version: memoryStore.budget_plans.size + 1,
       health_score: planOutput.health_score,
@@ -654,17 +656,74 @@ async function subscriptionGet(ctx, payload) {
 }
 
 // ---------- orders.create ----------
+/**
+ * 对外订单 DTO: 只暴露客户端渲染需要的字段。
+ * openid / out_trade_no / wx_transaction_id / client_request_id / family_id
+ * 属于内部或支付渠道字段, 一律不下发。
+ */
+function publicOrderDto(order) {
+  if (!order) return null
+  return {
+    _id: order._id,
+    sku: order.sku,
+    amount_fen: order.amount_fen,
+    status: order.status,
+    created_at: order.created_at,
+  }
+}
+
+/** orders.create 的统一成功响应 (订单 + 支付描述符) */
+function ordersCreateOk(order) {
+  return ok({
+    order: publicOrderDto(order),
+    payment: {
+      mock: true,
+      order_id: order._id,
+      sku: order.sku,
+      amount_fen: order.amount_fen,
+    },
+  })
+}
+
+const CLIENT_REQUEST_ID_MAX = 64
+
+/** memoryStore 侧按 openid + client_request_id 查已有订单 */
+function findMemoryOrderByClientRequest(openid, clientRequestId) {
+  for (const [, o] of memoryStore.orders) {
+    if (o && o.openid === openid && o.client_request_id === clientRequestId) return o
+  }
+  return null
+}
+
 async function ordersCreate(ctx, payload) {
   if (!ctx || !ctx.openid) {
     return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录')
   }
   const openid = ctx.openid
   const { sku, client_request_id } = payload || {}
+  if (typeof client_request_id !== 'string' || client_request_id.length === 0 ||
+      client_request_id.length > CLIENT_REQUEST_ID_MAX) {
+    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR',
+      `client_request_id 必填且长度 1-${CLIENT_REQUEST_ID_MAX}`)
+  }
   if (!sku || !SKU_CATALOG[sku]) {
     return fail(ERROR_CODE.INVALID_SKU, 'INVALID_SKU', '不支持的 SKU')
   }
   if (sku === 'pro_family') {
     return fail(ERROR_CODE.INVALID_SKU, 'INVALID_SKU', '家庭版敬请期待')
+  }
+
+  // 幂等前置查: 命中同 key 直接返回原订单, 不重复下单也不重复校验权益
+  const existing = usingCloudDb
+    ? await db.getOrderByClientRequest({ openid, clientRequestId: client_request_id })
+    : findMemoryOrderByClientRequest(openid, client_request_id)
+  if (existing) {
+    if (existing.sku !== sku) {
+      // 同一 key 复用到不同 SKU: 视为客户端 bug, 拒绝而不是静默改单
+      return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR',
+        'client_request_id 已用于其他 SKU 的订单')
+    }
+    return ordersCreateOk(existing)
   }
 
   // owner 鉴权
@@ -715,10 +774,22 @@ async function ordersCreate(ctx, payload) {
   // 写 pending order
   let order
   if (usingCloudDb) {
-    order = await db.createOrder({
-      openid, familyId: user.family_id, sku, amount_fen,
-      client_request_id: client_request_id || null,
-    })
+    try {
+      order = await db.createOrder({
+        openid, familyId: user.family_id, sku, amount_fen,
+        client_request_id,
+      })
+    } catch (e) {
+      // 并发下同 key 两次请求都走到这里, 唯一索引挡下第二条 → 回读原订单
+      if (!db.isDuplicateKeyError(e)) throw e
+      const raced = await db.getOrderByClientRequest({ openid, clientRequestId: client_request_id })
+      if (!raced) throw e
+      if (raced.sku !== sku) {
+        return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR',
+          'client_request_id 已用于其他 SKU 的订单')
+      }
+      order = raced
+    }
   } else {
     const id = 'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
     const now_ = Date.now()
@@ -727,21 +798,13 @@ async function ordersCreate(ctx, payload) {
       openid, family_id: user.family_id, sku, amount_fen,
       status: 'pending', pay_channel: 'mock',
       out_trade_no: id, wx_transaction_id: null, paid_at: null,
-      client_request_id: client_request_id || null,
+      client_request_id,
       created_at: now_, updated_at: now_,
     }
     memoryStore.orders.set(id, order)
   }
 
-  return ok({
-    order,
-    payment: {
-      mock: true,
-      order_id: order._id,
-      sku,
-      amount_fen,
-    },
-  })
+  return ordersCreateOk(order)
 }
 
 // ---------- orders.mockPay ----------
@@ -959,5 +1022,9 @@ module.exports = {
     const stored = { _id: id, ...order }
     memoryStore.orders.set(id, stored)
     return stored
+  },
+  /** 测试用: 列出 memoryStore 里的全部订单(断言"只落了一条") */
+  _allOrders() {
+    return Array.from(memoryStore.orders.values())
   },
 }

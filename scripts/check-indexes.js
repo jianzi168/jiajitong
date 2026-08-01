@@ -21,6 +21,7 @@ const INDEX_LIST = [
   { collection: 'subscriptions', fields: 'openid', unique: false },
   { collection: 'subscriptions', fields: 'family_id', unique: false },
   { collection: 'orders', fields: 'openid + created_at', unique: false },
+  { collection: 'orders', fields: 'openid + client_request_key', unique: true },
   { collection: 'family_invites', fields: 'invite_code', unique: true },
   { collection: 'calc_sessions', fields: '_openid + created_at', unique: false },
   { collection: 'calc_sessions', fields: 'expire_at', unique: false },
@@ -41,7 +42,7 @@ function printList() {
   console.log('集合（13 个，需在控制台手动创建）：')
   COLLECTIONS.forEach((c, i) => console.log(`  ${i + 1}. ${c}`))
 
-  console.log('\n索引（17 条，需在控制台手动创建）：\n')
+  console.log(`\n索引（${INDEX_LIST.length} 条，需在控制台手动创建）：\n`)
   console.log('  集合                        | 索引字段                    | 唯一')
   console.log('  ' + '-'.repeat(80))
   INDEX_LIST.forEach((idx) => {

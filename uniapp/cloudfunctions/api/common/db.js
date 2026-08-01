@@ -236,8 +236,43 @@ async function getActiveSubscription(familyId) {
 
 // ---------- orders ----------
 /**
+ * 判定是否唯一索引冲突 (orders 的 (openid, client_request_key) 唯一索引)
+ * 云开发底层是 MongoDB, 冲突走 E11000; 不同版本 SDK 的字段名不一致, 宽松匹配
+ */
+function isDuplicateKeyError(e) {
+  if (!e) return false
+  const msg = e.errMsg || e.message || ''
+  const code = e.errCode || e.code
+  return code === 11000 || code === -501001 || /duplicate key|E11000/i.test(msg)
+}
+
+/**
+ * 按 openid + client_request_id 读订单(下单幂等去重用)
+ * 命中返回完整订单文档, 未命中返回 null
+ */
+async function getOrderByClientRequest({ openid, clientRequestId }) {
+  if (!openid || !clientRequestId) return null
+  const db = getDB()
+  // 主查: client_request_key 是非空规范化键, 被唯一索引 (openid, client_request_key) 覆盖
+  const { data } = await db.collection('orders')
+    .where({ openid, client_request_key: clientRequestId })
+    .limit(1)
+    .get()
+  if (data && data[0]) return data[0]
+  // 回退: 本次改动之前落库的订单只写了 client_request_id, 没有 client_request_key。
+  // 回填完成后(见 scripts/create-collections.js 的迁移说明)这段可以删。
+  // 保留它是为了避免老订单重试时被判为"新请求"而重复下单。
+  const legacy = await db.collection('orders')
+    .where({ openid, client_request_id: clientRequestId })
+    .limit(1)
+    .get()
+  return (legacy.data && legacy.data[0]) || null
+}
+
+/**
  * 创建 pending 订单; amount_fen 由调用方从 SKU 表取
- * 幂等: 同一 openid+client_request_id 返回同一订单(本期先不加索引, 业务层去重)
+ * 幂等: 同一 openid+client_request_id 只落一条 —— 由唯一索引
+ * (openid, client_request_key) 兜底, 冲突时调用方 re-read 返回原订单
  */
 async function createOrder({ openid, familyId, sku, amount_fen, client_request_id = null }) {
   const db = getDB()
@@ -254,6 +289,8 @@ async function createOrder({ openid, familyId, sku, amount_fen, client_request_i
     wx_transaction_id: null,
     paid_at: null,
     client_request_id: client_request_id || null,
+    // 非空规范化键: 无 client_request_id 时退化为 _id(天然唯一), 保证唯一索引可建
+    client_request_key: client_request_id || id,
     created_at: now_,
     updated_at: now_,
   }
@@ -425,6 +462,8 @@ module.exports = {
   getActiveSubscription,
   createOrder,
   getOrder,
+  getOrderByClientRequest,
+  isDuplicateKeyError,
   markOrderPaid,
   getAppConfig,
   setAppConfig,

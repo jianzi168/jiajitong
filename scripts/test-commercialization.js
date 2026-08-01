@@ -117,7 +117,7 @@ describe('T8-0b 续期日期 computeExpiresAt', () => {
 // ---------- T8-1: orders.create 未登录 ----------
 describe('T8-1 orders.create 未登录', () => {
   test('无 openid → 40101', async () => {
-    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(null))
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L120' } }, makeCtx(null))
     fail(r, 40101)
   })
 })
@@ -128,7 +128,7 @@ describe('T8-2 orders.create 无 active plan', () => {
     const openid = 't8_2_openid'
     // bootstrap 创建 user + family, 但不存 plan
     await dispatch({ action: 'user.bootstrap', payload: { nickname: 't8_2' } }, makeCtx(openid))
-    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(openid))
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L131' } }, makeCtx(openid))
     fail(r, 40401)
   })
 })
@@ -139,7 +139,7 @@ describe('T8-3 report_once → mockPay → subscription.get', () => {
     const openid = 't8_3_openid'
     await bootstrapFamily(openid)
     // bootstrap 已写 free subscription, 这里直接买
-    const created = await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(openid))
+    const created = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L142' } }, makeCtx(openid))
     const { order, payment } = ok(created)
     assert.equal(order.status, 'pending')
     assert.equal(order.amount_fen, 1990)
@@ -164,7 +164,7 @@ describe('T8-4 重复调 orders.mockPay', () => {
   test('已 paid 再次 mockPay → 40901', async () => {
     const openid = 't8_4_openid'
     await bootstrapFamily(openid)
-    const created = await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(openid))
+    const created = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L167' } }, makeCtx(openid))
     const order = ok(created).order
     await dispatch({ action: 'orders.mockPay', payload: { order_id: order._id } }, makeCtx(openid))
     // 第二次
@@ -206,7 +206,7 @@ describe('T8-6 Pro 续费', () => {
     const openid = 't8_6_openid'
     await bootstrapFamily(openid)
     // 第一次 Pro
-    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly' } }, makeCtx(openid)))
+    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_L209' } }, makeCtx(openid)))
     await dispatch({ action: 'orders.mockPay', payload: { order_id: c1.order._id } }, makeCtx(openid))
 
     const sub1 = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openid)))
@@ -214,7 +214,7 @@ describe('T8-6 Pro 续费', () => {
 
     // 等几毫秒, 再买一次 (续费)
     await new Promise((r) => setTimeout(r, 10))
-    const c2 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly' } }, makeCtx(openid)))
+    const c2 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_L217' } }, makeCtx(openid)))
     const paid2 = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: c2.order._id } }, makeCtx(openid)))
     const newExpires = paid2.subscription.expires_at
 
@@ -229,9 +229,9 @@ describe('T8-7 Pro 覆盖 report_once', () => {
   test('先 report_once, 再 pro_yearly → 最终 plan_type=pro_yearly', async () => {
     const openid = 't8_7_openid'
     await bootstrapFamily(openid)
-    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(openid)))
+    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L232' } }, makeCtx(openid)))
     await dispatch({ action: 'orders.mockPay', payload: { order_id: c1.order._id } }, makeCtx(openid))
-    const c2 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly' } }, makeCtx(openid)))
+    const c2 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_L234' } }, makeCtx(openid)))
     await dispatch({ action: 'orders.mockPay', payload: { order_id: c2.order._id } }, makeCtx(openid))
 
     const sub = ok(await dispatch({ action: 'subscription.get', payload: {} }, makeCtx(openid)))
@@ -246,14 +246,14 @@ describe('T8-8 非法 sku', () => {
   test('sku=garbage → 40020 INVALID_SKU', async () => {
     const openid = 't8_8_openid'
     await bootstrapFamily(openid)
-    const r = await dispatch({ action: 'orders.create', payload: { sku: 'garbage' } }, makeCtx(openid))
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'garbage', client_request_id: 'req_L249' } }, makeCtx(openid))
     fail(r, 40020)
   })
 
   test('sku=pro_family → 40020 (本期禁用)', async () => {
     const openid = 't8_8b_openid'
     await bootstrapFamily(openid)
-    const r = await dispatch({ action: 'orders.create', payload: { sku: 'pro_family' } }, makeCtx(openid))
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'pro_family', client_request_id: 'req_L256' } }, makeCtx(openid))
     fail(r, 40020)
   })
 })
@@ -266,7 +266,7 @@ describe('T8-9 订单越权', () => {
     await bootstrapFamily(openidA)
     // B 也 bootstrap 一下, 否则 B 没有 user, 走的是 UNAUTHORIZED 而不是 FORBIDDEN
     await dispatch({ action: 'user.bootstrap', payload: { nickname: 'B' } }, makeCtx(openidB))
-    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(openidA)))
+    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L269' } }, makeCtx(openidA)))
     const r = await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openidB))
     fail(r, 40301)
   })
@@ -302,7 +302,7 @@ describe('T8-11 user.bootstrap 真读 subscription', () => {
   test('付费后 bootstrap 也返回真读', async () => {
     const openid = 't8_11b_openid'
     await bootstrapFamily(openid)
-    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(openid)))
+    const c = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L305' } }, makeCtx(openid)))
     await dispatch({ action: 'orders.mockPay', payload: { order_id: c.order._id } }, makeCtx(openid))
     const r = await dispatch({ action: 'user.bootstrap', payload: {} }, makeCtx(openid))
     const data = ok(r)
@@ -330,10 +330,10 @@ describe('T8-bonus Pro 购买单次报告', () => {
     const openid = 't8_bonus_openid'
     await bootstrapFamily(openid)
     // 先 Pro
-    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly' } }, makeCtx(openid)))
+    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: 'req_L333' } }, makeCtx(openid)))
     await dispatch({ action: 'orders.mockPay', payload: { order_id: c1.order._id } }, makeCtx(openid))
     // 再买单次
-    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(openid))
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_L336' } }, makeCtx(openid))
     fail(r, 40921)
   })
 })
@@ -369,5 +369,128 @@ describe('T8-13 share.getQrCode 云端 wxacode + upload (子进程)', () => {
     assert.equal(result.scene, 'from=poster')
     assert.equal(result.cloudPath, 'share-qrcodes/landing-v1.png')
     assert.equal(result.uploadCalls, 1)
+  })
+})
+
+// ---------- T8-14: orders.create 幂等 + 响应裁剪 (Phase 8.1) ----------
+describe('T8-14 orders.create 幂等', () => {
+  test('同 client_request_id + 同 sku → 返回同一订单 _id, 不重复下单', async () => {
+    const openid = 't8_14_openid'
+    await bootstrapFamily(openid)
+    const key = 'req_idem_001'
+    const c1 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: key } }, makeCtx(openid)))
+    const c2 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: key } }, makeCtx(openid)))
+
+    assert.equal(c2.order._id, c1.order._id, '重复请求应返回原订单')
+    assert.equal(c2.payment.order_id, c1.order._id)
+    assert.equal(c2.order.amount_fen, c1.order.amount_fen)
+    assert.equal(c2.order.status, 'pending')
+
+    // 底层确实只落了一条订单
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const all = handlers._allOrders().filter((o) => o.openid === openid)
+    assert.equal(all.length, 1, `应只有 1 条订单, 实际 ${all.length}`)
+  })
+
+  test('同 client_request_id + 不同 sku → 40010 VALIDATION_ERROR', async () => {
+    const openid = 't8_14b_openid'
+    await bootstrapFamily(openid)
+    const key = 'req_idem_002'
+    ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: key } }, makeCtx(openid)))
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'pro_yearly', client_request_id: key } }, makeCtx(openid))
+    fail(r, 40010)
+
+    // 冲突请求不得改写原订单的 sku, 也不得新增订单
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const all = handlers._allOrders().filter((o) => o.openid === openid)
+    assert.equal(all.length, 1)
+    assert.equal(all[0].sku, 'report_once', '原订单 SKU 不应被替换')
+  })
+
+  test('幂等键按 openid 隔离: 不同用户可用同一 client_request_id', async () => {
+    const openidA = 't8_14c_A'
+    const openidB = 't8_14c_B'
+    await bootstrapFamily(openidA)
+    await bootstrapFamily(openidB)
+    const key = 'req_shared_key'
+    const a = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: key } }, makeCtx(openidA)))
+    const b = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: key } }, makeCtx(openidB)))
+    assert.notEqual(a.order._id, b.order._id, '不同用户的同名幂等键不应互相命中')
+  })
+})
+
+describe('T8-14b client_request_id 校验', () => {
+  test('缺失 → 40010', async () => {
+    const openid = 't8_14d_openid'
+    await bootstrapFamily(openid)
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once' } }, makeCtx(openid))
+    fail(r, 40010)
+  })
+
+  test('空字符串 → 40010', async () => {
+    const openid = 't8_14e_openid'
+    await bootstrapFamily(openid)
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: '' } }, makeCtx(openid))
+    fail(r, 40010)
+  })
+
+  test('超过 64 字符 → 40010', async () => {
+    const openid = 't8_14f_openid'
+    await bootstrapFamily(openid)
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'x'.repeat(65) } }, makeCtx(openid))
+    fail(r, 40010)
+  })
+
+  test('恰好 64 字符 → 通过', async () => {
+    const openid = 't8_14g_openid'
+    await bootstrapFamily(openid)
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'x'.repeat(64) } }, makeCtx(openid))
+    ok(r)
+  })
+
+  test('非字符串 (number) → 40010', async () => {
+    const openid = 't8_14h_openid'
+    await bootstrapFamily(openid)
+    const r = await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 12345 } }, makeCtx(openid))
+    fail(r, 40010)
+  })
+})
+
+describe('T8-14c orders.create 响应裁剪', () => {
+  test('order 只含 _id/sku/amount_fen/status/created_at, 无内部字段', async () => {
+    const openid = 't8_14i_openid'
+    await bootstrapFamily(openid)
+    const d = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_dto_001' } }, makeCtx(openid)))
+
+    assert.deepEqual(
+      Object.keys(d.order).sort(),
+      ['_id', 'amount_fen', 'created_at', 'sku', 'status'],
+    )
+    for (const leaked of ['openid', 'out_trade_no', 'wx_transaction_id', 'client_request_id', 'family_id', 'pay_channel']) {
+      assert.equal(d.order[leaked], undefined, `order 不应包含 ${leaked}`)
+    }
+  })
+
+  test('幂等命中返回的订单同样是裁剪后的 DTO', async () => {
+    const openid = 't8_14j_openid'
+    await bootstrapFamily(openid)
+    const key = 'req_dto_002'
+    ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: key } }, makeCtx(openid)))
+    const d2 = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: key } }, makeCtx(openid)))
+
+    assert.deepEqual(
+      Object.keys(d2.order).sort(),
+      ['_id', 'amount_fen', 'created_at', 'sku', 'status'],
+    )
+    assert.equal(d2.order.openid, undefined)
+    assert.equal(d2.order.client_request_id, undefined)
+  })
+
+  test('裁剪后 mockPay 仍可用返回的 _id 完成支付闭环', async () => {
+    const openid = 't8_14k_openid'
+    await bootstrapFamily(openid)
+    const d = ok(await dispatch({ action: 'orders.create', payload: { sku: 'report_once', client_request_id: 'req_dto_003' } }, makeCtx(openid)))
+    const paid = ok(await dispatch({ action: 'orders.mockPay', payload: { order_id: d.order._id } }, makeCtx(openid)))
+    assert.equal(paid.subscription.plan_type, 'report_once')
   })
 })
