@@ -25,10 +25,16 @@ async function main() {
 
   const collections = [
     'users', 'families', 'financial_profiles', 'budget_plans', 'weekly_entries',
-    // Phase 8 商业化
-    'subscriptions', 'orders', 'app_config',
+    // Phase 8 分享/订阅消息模板配置
+    'app_config',
     // Phase 9 预留
     'recommendation_status', 'family_invites', 'calc_sessions', 'analytics_events', 'family_members',
+    // Phase 10 行动清单写库
+    'action_statuses',
+    // Phase 10 订阅消息推送
+    'subscribe_records',
+    // 帮助与反馈
+    'feedbacks',
   ]
 
   console.log('=== 1. 创建集合 ===')
@@ -59,26 +65,6 @@ async function main() {
   // weekly_entries.family_id 单键, 用于月内聚合
   await safeCreateIndex(db, 'weekly_entries', 'family_id', { family_id: 1 })
 
-  // ---------- Phase 8 商业化索引 ----------
-  // subscriptions: 一户一份,family_id 业务主键
-  await safeCreateIndex(db, 'subscriptions', 'family_id_1', { family_id: 1 }, { unique: true })
-  await safeCreateIndex(db, 'subscriptions', 'openid_1', { openid: 1 })
-  // orders: 按用户时间倒序
-  await safeCreateIndex(db, 'orders', 'openid_created', { openid: 1, created_at: -1 })
-  await safeCreateIndex(db, 'orders', 'family_created', { family_id: 1, created_at: -1 })
-  // orders: (openid, client_request_key) 唯一 —— 下单幂等兜底 (Phase 8.1)
-  //
-  // 为什么用 client_request_key 而不是直接对 client_request_id 建唯一索引:
-  // 微信云开发的 createIndex 只支持 { name, unique } 选项, 无法表达
-  // sparse / partialFilterExpression。而 MongoDB 把"字段缺失"等价于 null,
-  // 所以直接对可空的 client_request_id 建唯一索引, 同一用户的多条历史订单
-  // (client_request_id 均为 null) 会互相冲突, 建索引直接失败。
-  // 因此 createOrder 改写非空规范化键 client_request_key = client_request_id || _id:
-  // 有请求 ID 时用它去重, 没有时退化为 _id(天然唯一), 不会误挡。
-  // 存量订单没有这个字段, 需先回填(下方 backfillOrderRequestKey)再建索引。
-  await backfillOrderRequestKey(db)
-  await safeCreateIndex(db, 'orders', 'openid_client_request_key',
-    { openid: 1, client_request_key: 1 }, { unique: true, strict: true })
   // app_config: 业务键唯一
   await safeCreateIndex(db, 'app_config', 'key_1', { key: 1 }, { unique: true })
   // recommendation_status (Phase 7 留 P1,本期先建索引)
@@ -91,42 +77,16 @@ async function main() {
   await safeCreateIndex(db, 'analytics_events', 'event_created', { event: 1, created_at: -1 })
   // family_members: 一户一人
   await safeCreateIndex(db, 'family_members', 'family_openid', { family_id: 1, openid: 1 }, { unique: true })
+  // action_statuses: 一户一条建议一条状态（Phase 10 行动清单写库）
+  await safeCreateIndex(db, 'action_statuses', 'family_rec', { family_id: 1, rec_id: 1 }, { unique: true })
+  // subscribe_records: 一人一模板一条记录（Phase 10 订阅消息推送）
+  await safeCreateIndex(db, 'subscribe_records', 'openid_template', { openid: 1, template_id: 1 }, { unique: true })
+  await safeCreateIndex(db, 'subscribe_records', 'template_id', { template_id: 1 })
+  // feedbacks: 按时间倒序查阅
+  await safeCreateIndex(db, 'feedbacks', 'created_at_-1', { created_at: -1 })
 
   console.log('\n✅ 初始化完成')
   process.exit(0)
-}
-
-/**
- * 回填存量订单的 client_request_key。
- * 老订单(Phase 8.1 之前)没有这个字段, 在 MongoDB 里等价于 null;
- * 同一 openid 下有 2 条以上老订单时, 唯一索引会因 null 重复而创建失败。
- * 规则与 createOrder 保持一致: client_request_id 有值就用它, 否则退化为 _id。
- * 幂等, 可重复执行。
- */
-async function backfillOrderRequestKey(db) {
-  const _ = db.command
-  let scanned = 0
-  try {
-    while (true) {
-      const { data } = await db.collection('orders')
-        .where({ client_request_key: _.exists(false) })
-        .limit(100)
-        .get()
-      if (!data || data.length === 0) break
-      for (const o of data) {
-        await db.collection('orders').doc(o._id).update({
-          data: { client_request_key: o.client_request_id || o._id },
-        })
-        scanned++
-      }
-      if (data.length < 100) break
-    }
-    console.log(`  · orders.client_request_key 回填 ${scanned} 条`)
-  } catch (e) {
-    // 回填失败时不要静默建成非唯一索引 —— 直接中止, 让人工介入
-    console.error('  ✗ orders.client_request_key 回填失败:', e.errMsg || e.message)
-    throw e
-  }
 }
 
 /**

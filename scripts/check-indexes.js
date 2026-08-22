@@ -18,28 +18,29 @@ const INDEX_LIST = [
   { collection: 'budget_plans', fields: 'family_id + created_at', unique: false },
   { collection: 'weekly_entries', fields: 'family_id + week_start', unique: true },
   { collection: 'recommendation_status', fields: 'family_id + plan_id + rule_id', unique: true },
-  { collection: 'subscriptions', fields: 'openid', unique: false },
-  { collection: 'subscriptions', fields: 'family_id', unique: false },
-  { collection: 'orders', fields: 'openid + created_at', unique: false },
-  { collection: 'orders', fields: 'openid + client_request_key', unique: true },
   { collection: 'family_invites', fields: 'invite_code', unique: true },
   { collection: 'calc_sessions', fields: '_openid + created_at', unique: false },
   { collection: 'calc_sessions', fields: 'expire_at', unique: false },
   { collection: 'analytics_events', fields: '_openid + created_at', unique: false },
   { collection: 'analytics_events', fields: 'event + created_at', unique: false },
-  { collection: 'app_config', fields: 'key', unique: true }
+  { collection: 'app_config', fields: 'key', unique: true },
+  { collection: 'action_statuses', fields: 'family_id + rec_id', unique: true },
+  { collection: 'subscribe_records', fields: 'openid + template_id', unique: true },
+  { collection: 'subscribe_records', fields: 'template_id', unique: false },
+  { collection: 'feedbacks', fields: 'created_at', unique: false },
 ]
 
 const COLLECTIONS = [
   'users', 'families', 'family_members', 'financial_profiles',
-  'budget_plans', 'weekly_entries', 'subscriptions', 'orders',
+  'budget_plans', 'weekly_entries',
   'recommendation_status', 'family_invites', 'calc_sessions',
-  'analytics_events', 'app_config'
+  'analytics_events', 'app_config', 'action_statuses', 'subscribe_records',
+  'feedbacks',
 ]
 
 function printList() {
   console.log('\n📋 家计通 · 云数据库索引清单\n')
-  console.log('集合（13 个，需在控制台手动创建）：')
+  console.log('集合（14 个，需在控制台手动创建）：')
   COLLECTIONS.forEach((c, i) => console.log(`  ${i + 1}. ${c}`))
 
   console.log(`\n索引（${INDEX_LIST.length} 条，需在控制台手动创建）：\n`)
@@ -54,7 +55,7 @@ function printList() {
 
   console.log('\n📌 操作步骤：')
   console.log('  1. 打开微信云开发控制台 → 数据库')
-  console.log('  2. 逐个创建上述 13 个集合')
+  console.log('  2. 逐个创建上述 14 个集合')
   console.log('  3. 对每个集合进入「索引管理」创建上述索引')
   console.log('  4. 对每个集合设置安全规则为 { "read": false, "write": false }')
   console.log('')
