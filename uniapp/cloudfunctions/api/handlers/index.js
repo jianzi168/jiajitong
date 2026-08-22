@@ -61,9 +61,6 @@ const memoryStore = {
   financial_profiles: new Map(),
   budget_plans: new Map(),
   weekly_entries: new Map(),
-  // Phase 8 商业化
-  subscriptions: new Map(),
-  orders: new Map(),
   app_config: new Map(),
   // Phase 10 伴侣邀请
   family_invites: new Map(),
@@ -78,50 +75,6 @@ const memoryStore = {
   feedbacks: new Map(),
 }
 
-// ---------- Phase 8: 权益计算纯函数 ----------
-/**
- * 给定 plan_type + expires_at + now, 算出 entitlements
- * 纯函数, 测试可注入固定 now 验证跨年/2 月 29 日
- */
-function calcEntitlements(plan_type, expires_at, now) {
-  const paid = ['pro_yearly', 'pro_family', 'report_once'].includes(plan_type)
-  const notExpired = !expires_at || expires_at > now
-  const canViewFull = paid && notExpired
-  const canExportPdf = canViewFull
-  const canShareFree = true
-  const daysRemaining = expires_at
-    ? Math.max(0, Math.ceil((expires_at - now) / 86400000))
-    : null
-  return { canViewFull, canExportPdf, canShareFree, daysRemaining }
-}
-
-/**
- * SKU catalog: 服务端唯一真值
- * 客户端不得传入 amount_fen 或 expires_at
- */
-const SKU_CATALOG = {
-  report_once: { amount_fen: 1990, days: 7, plan_type: 'report_once' },
-  pro_yearly:  { amount_fen: 6800, days: 365, plan_type: 'pro_yearly' },
-  pro_family:  { amount_fen: 12800, days: 365, plan_type: 'pro_family' }, // 本期禁用
-}
-
-/**
- * 给定 now + order + 已存在的 subscription, 算出新 expires_at
- *  - report_once: now + 7d
- *  - pro_yearly 首次: now + 365d
- *  - pro_yearly 续费: max(now, current_expires_at) + 365d
- *  - Pro 覆盖 report_once: 直接 now + 365d (旧 7 天失效)
- */
-function computeExpiresAt(order, currentSub, now) {
-  const sku = SKU_CATALOG[order.sku]
-  if (!sku) return null
-  if (order.sku === 'report_once') return now + sku.days * 86400000
-  // pro_yearly / pro_family
-  if (currentSub && currentSub.plan_type === sku.plan_type && currentSub.expires_at && currentSub.expires_at > now) {
-    return currentSub.expires_at + sku.days * 86400000
-  }
-  return now + sku.days * 86400000
-}
 // ---------- cities.list ----------
 async function citiesList(ctx, payload) {
   return ok({
@@ -231,67 +184,14 @@ async function userBootstrap(ctx, payload) {
     }
   }
 
-  // Phase 8: 读真实订阅 (无则保持 free 空壳, 不阻塞 bootstrap)
-  let subscription = { plan_type: 'free', expires_at: null, source_order_id: null, started_at: null }
-  try {
-    const { subscription: sub, effectivePlanType } = await subscriptionGetEffective(user.family_id)
-    if (sub) {
-      subscription = {
-        plan_type: sub.plan_type,
-        expires_at: sub.expires_at || null,
-        source_order_id: sub.source_order_id || null,
-        started_at: sub.started_at || null,
-        effective_plan_type: effectivePlanType,
-      }
-    }
-  } catch (e) {
-    console.warn('[userBootstrap] subscription read failed, fallback to free:', e.message)
-  }
-
   return ok({
     user,
     family_id: user.family_id,
-    subscription,
     activePlan,
   })
 }
 
-/**
- * 读家庭有效订阅(纯函数 + memoryStore/cloudDb 双路)
- * 内部 helper, 不在 module.exports 暴露
- */
-async function subscriptionGetEffective(familyId) {
-  if (db) {
-    const { subscription, effectivePlanType } = await db.getActiveSubscription(familyId)
-    return { subscription, effectivePlanType }
-  }
-  let sub = null
-  for (const [, v] of memoryStore.subscriptions) {
-    if (v && v.family_id === familyId) { sub = v; break }
-  }
-  if (!sub) return { subscription: null, effectivePlanType: 'free' }
-  const isExpired = sub.expires_at ? sub.expires_at <= Date.now() : false
-  return { subscription: sub, effectivePlanType: isExpired ? 'free' : sub.plan_type }
-}
-
-/**
- * 统计本月该 family 已创建的计划数（免费用户限流辅助，双路）
- */
-async function countPlansThisMonth(familyId) {
-  const monthStart = new Date()
-  monthStart.setDate(1)
-  monthStart.setHours(0, 0, 0, 0)
-  if (db) {
-    return await db.countPlansThisMonth(familyId, monthStart.toISOString())
-  }
-  let count = 0
-  for (const [, v] of memoryStore.budget_plans) {
-    if (v && v.family_id === familyId && v.created_at && new Date(v.created_at) >= monthStart) count++
-  }
-  return count
-}
-
-// ---------- plans.save (Phase 6，Phase 9 加免费限流) ----------
+// ---------- plans.save (Phase 6) ----------
 async function plansSave(ctx, payload) {
   const authErr = requireAuth(ctx); if (authErr) return authErr
   const openid = ctx.openid
@@ -308,16 +208,6 @@ async function plansSave(ctx, payload) {
   } else {
     user = memoryStore.users.get(openid)
     familyId = user ? user.family_id : 'fam_test'
-  }
-
-  // Phase 9: 免费用户月度限流（1次/月）
-  const { effectivePlanType } = await subscriptionGetEffective(familyId)
-  if (effectivePlanType === 'free') {
-    const monthCount = await countPlansThisMonth(familyId)
-    if (monthCount >= 1) {
-      return fail(ERROR_CODE.RATE_LIMITED, 'FREE_TIER_LIMIT',
-        '免费用户每月仅可测算 1 次，升级 Pro 可解锁无限次测算')
-    }
   }
 
   let saved
@@ -680,444 +570,6 @@ async function weeklyCopyLastWeek(ctx, payload) {
   const ownerErr = requireOwner(user); if (ownerErr) return ownerErr
 
   return ok({ categories: last ? last.categories : null })
-}
-
-// ============================================================
-// Phase 8 商业化 action
-// ============================================================
-
-// ---------- subscription.get ----------
-async function subscriptionGet(ctx, payload) {
-  const authErr = requireAuth(ctx); if (authErr) return authErr
-  const openid = ctx.openid
-
-  // 取 user
-  let user
-  if (usingCloudDb) {
-    user = await db.getUserByOpenid(openid)
-    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
-  } else {
-    user = memoryStore.users.get(openid)
-    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
-  }
-
-  const { subscription, effectivePlanType } = await subscriptionGetEffective(user.family_id)
-  // T8-12: 无记录时懒写 free, 保证前端总是有 subscription 字段
-  let subRow = subscription
-  if (!subRow) {
-    if (usingCloudDb) {
-      subRow = await db.upsertSubscription({
-        familyId: user.family_id, openid, plan_type: 'free',
-        started_at: Date.now(), expires_at: null, source_order_id: null,
-      })
-    } else {
-      const now_ = Date.now()
-      const id = 'sub_' + now_ + '_' + Math.random().toString(36).slice(2, 6)
-      subRow = {
-        _id: id, family_id: user.family_id, openid,
-        plan_type: 'free', started_at: now_, expires_at: null, source_order_id: null,
-        created_at: now_, updated_at: now_,
-      }
-      memoryStore.subscriptions.set(id, subRow)
-    }
-  }
-  const now = Date.now()
-  const plan_type = subRow.plan_type
-  const expires_at = subRow.expires_at || null
-  const entitlements = calcEntitlements(plan_type, expires_at, now)
-
-  return ok({
-    subscription: {
-      plan_type,
-      expires_at,
-      started_at: subRow.started_at || null,
-      source_order_id: subRow.source_order_id || null,
-    },
-    effective_plan_type: effectivePlanType,
-    entitlements,
-    server_now: now,
-  })
-}
-
-// ---------- orders.create ----------
-/**
- * 对外订单 DTO: 只暴露客户端渲染需要的字段。
- * openid / out_trade_no / wx_transaction_id / client_request_id / family_id
- * 属于内部或支付渠道字段, 一律不下发。
- */
-function publicOrderDto(order) {
-  if (!order) return null
-  return {
-    _id: order._id,
-    sku: order.sku,
-    amount_fen: order.amount_fen,
-    status: order.status,
-    created_at: order.created_at,
-  }
-}
-
-/** orders.create 的统一成功响应 (订单 + 支付描述符) */
-function ordersCreateOk(order) {
-  return ok({
-    order: publicOrderDto(order),
-    payment: {
-      mock: true,
-      order_id: order._id,
-      sku: order.sku,
-      amount_fen: order.amount_fen,
-    },
-  })
-}
-
-const CLIENT_REQUEST_ID_MAX = 64
-
-/** memoryStore 侧按 openid + client_request_id 查已有订单 */
-function findMemoryOrderByClientRequest(openid, clientRequestId) {
-  for (const [, o] of memoryStore.orders) {
-    if (o && o.openid === openid && o.client_request_id === clientRequestId) return o
-  }
-  return null
-}
-
-async function ordersCreate(ctx, payload) {
-  const authErr = requireAuth(ctx); if (authErr) return authErr
-  const openid = ctx.openid
-  const { sku, client_request_id } = payload || {}
-  if (typeof client_request_id !== 'string' || client_request_id.length === 0 ||
-      client_request_id.length > CLIENT_REQUEST_ID_MAX) {
-    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR',
-      `client_request_id 必填且长度 1-${CLIENT_REQUEST_ID_MAX}`)
-  }
-  if (!sku || !SKU_CATALOG[sku]) {
-    return fail(ERROR_CODE.INVALID_SKU, 'INVALID_SKU', '不支持的 SKU')
-  }
-  if (sku === 'pro_family') {
-    return fail(ERROR_CODE.INVALID_SKU, 'INVALID_SKU', '家庭版敬请期待')
-  }
-
-  // 幂等前置查: 命中同 key 直接返回原订单, 不重复下单也不重复校验权益
-  const existing = usingCloudDb
-    ? await db.getOrderByClientRequest({ openid, clientRequestId: client_request_id })
-    : findMemoryOrderByClientRequest(openid, client_request_id)
-  if (existing) {
-    if (existing.sku !== sku) {
-      // 同一 key 复用到不同 SKU: 视为客户端 bug, 拒绝而不是静默改单
-      return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR',
-        'client_request_id 已用于其他 SKU 的订单')
-    }
-    return ordersCreateOk(existing)
-  }
-
-  // owner 鉴权
-  let user
-  if (usingCloudDb) {
-    user = await db.getUserByOpenid(openid)
-    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
-    if (user.role !== 'owner') return requireOwner(user)
-  } else {
-    user = memoryStore.users.get(openid)
-    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
-    if (user.role !== 'owner') return requireOwner(user)
-  }
-
-  // 必须有 active plan
-  let activePlan = null
-  if (usingCloudDb) {
-    activePlan = await db.getActivePlan(user.family_id)
-  } else {
-    for (const [, v] of memoryStore.budget_plans) {
-      if (v && v.family_id === user.family_id && v.is_active) { activePlan = v; break }
-    }
-  }
-  if (!activePlan) {
-    return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '请先生成预算方案')
-  }
-
-  // 已有同级或更高有效权益 → 拒绝 (T8 防降级)
-  const { effectivePlanType } = await subscriptionGetEffective(user.family_id)
-  if (sku === 'report_once' && (effectivePlanType === 'pro_yearly' || effectivePlanType === 'pro_family')) {
-    return fail(ERROR_CODE.ALREADY_ENTITLED, 'ALREADY_ENTITLED', '您已是 Pro 会员')
-  }
-
-  // 读 SKU 金额 (优先 app_config, fallback 写死)
-  let amount_fen = SKU_CATALOG[sku].amount_fen
-  if (usingCloudDb) {
-    const cfg = await db.getAppConfig('paywall_prices_v1')
-    if (cfg && cfg[sku] && typeof cfg[sku] === 'number') {
-      amount_fen = cfg[sku]
-    }
-  } else {
-    const cfg = memoryStore.app_config.get('paywall_prices_v1')
-    if (cfg && cfg.value && cfg.value[sku] && typeof cfg.value[sku] === 'number') {
-      amount_fen = cfg.value[sku]
-    }
-  }
-
-  // 写 pending order
-  let order
-  if (usingCloudDb) {
-    try {
-      order = await db.createOrder({
-        openid, familyId: user.family_id, sku, amount_fen,
-        client_request_id,
-      })
-    } catch (e) {
-      // 并发下同 key 两次请求都走到这里, 唯一索引挡下第二条 → 回读原订单
-      if (!db.isDuplicateKeyError(e)) throw e
-      const raced = await db.getOrderByClientRequest({ openid, clientRequestId: client_request_id })
-      if (!raced) throw e
-      if (raced.sku !== sku) {
-        return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR',
-          'client_request_id 已用于其他 SKU 的订单')
-      }
-      order = raced
-    }
-  } else {
-    const id = 'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
-    const now_ = Date.now()
-    order = {
-      _id: id,
-      openid, family_id: user.family_id, sku, amount_fen,
-      status: 'pending', pay_channel: 'mock',
-      out_trade_no: id, wx_transaction_id: null, paid_at: null,
-      client_request_id,
-      created_at: now_, updated_at: now_,
-    }
-    memoryStore.orders.set(id, order)
-  }
-
-  return ordersCreateOk(order)
-}
-
-// ---------- 结算边界 (Phase 8.1) ----------
-/**
- * 终态订单: 永远不该由结算发放权益 (已取消 / 已退款)
- */
-const ORDER_TERMINAL_STATUS = ['cancelled', 'refunded']
-
-/** 从 memoryStore 找该订单发放过的订阅 */
-function findMemorySubscriptionBySourceOrder(orderId) {
-  if (!orderId) return null
-  for (const [, v] of memoryStore.subscriptions) {
-    if (v && v.source_order_id === orderId) return v
-  }
-  return null
-}
-
-/** 订阅 → 对外 DTO (带实时 entitlements) */
-function subscriptionSettleDto(sub, now) {
-  return {
-    plan_type: sub.plan_type,
-    expires_at: sub.expires_at || null,
-    started_at: sub.started_at || null,
-    source_order_id: sub.source_order_id || null,
-    entitlements: calcEntitlements(sub.plan_type, sub.expires_at || null, now),
-  }
-}
-
-/**
- * 结算一笔已支付订单 → 发放/恢复权益。
- *
- * 与 Mock 无关的纯结算边界: 后续真实 payNotify 回调可以直接复用,
- * 只需换 channel / transactionId, 不必重写权益逻辑。
- *
- * 三条路径:
- *   1. pending          → 置 paid(用 paidAt), 按 computeExpiresAt 发放
- *   2. paid + 已有订阅   → 原样返回, 绝不重算 (幂等重试)
- *   3. paid + 订阅缺失   → 用订单原始 paid_at 补发, 而不是重试时的墙钟时间
- *
- * 路径 3 是关键: 若用重试时间重算, 一次重试就白送用户一个完整周期。
- *
- * @param {object}  order         订单文档 (调用方已确认存在)
- * @param {object}  user          结算发起人 (需与订单同属一人/一户)
- * @param {string}  channel       支付渠道 ('mock' | 'wxpay')
- * @param {string}  transactionId 渠道流水号
- * @param {number}  paidAt        本次结算时间; 订单已有 paid_at 时以订单为准
- * @returns {{ ok: true, order, subscription } | { ok: false, error }}
- */
-async function settlePaidOrder({ order, user, channel = 'mock', transactionId = null, paidAt }) {
-  if (!order || !order._id) {
-    return { ok: false, error: fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '订单不存在') }
-  }
-  if (!user || !user.openid) {
-    return { ok: false, error: fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先登录') }
-  }
-
-  // 越权守卫: 订单必须同时属于该 openid 与该 family。
-  // 放在结算内部而不是只在 handler 里, 是为了让未来的回调路径也拿到同一道闸。
-  if (order.openid !== user.openid ||
-      (order.family_id && user.family_id && order.family_id !== user.family_id)) {
-    return { ok: false, error: fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '订单不属于当前用户') }
-  }
-
-  // 终态订单不发权益, 也不"静默当作已支付"
-  if (ORDER_TERMINAL_STATUS.includes(order.status)) {
-    return {
-      ok: false,
-      error: fail(ERROR_CODE.ORDER_STATUS_INVALID, 'ORDER_STATUS_INVALID', `订单已是 ${order.status} 状态`),
-    }
-  }
-  if (order.status !== 'pending' && order.status !== 'paid') {
-    return {
-      ok: false,
-      error: fail(ERROR_CODE.ORDER_STATUS_INVALID, 'ORDER_STATUS_INVALID', `订单状态 ${order.status} 无法结算`),
-    }
-  }
-
-  const sku = SKU_CATALOG[order.sku]
-  if (!sku) {
-    return { ok: false, error: fail(ERROR_CODE.INVALID_SKU, 'INVALID_SKU', '订单 SKU 已下线') }
-  }
-
-  const orderId = order._id
-  const familyId = user.family_id
-  const nowWall = Date.now()
-
-  // 已支付订单: 若权益已发放过, 原样返回 —— 这是重试幂等的唯一出口
-  if (order.status === 'paid') {
-    const granted = usingCloudDb
-      ? await db.getSubscriptionBySourceOrder(orderId)
-      : findMemorySubscriptionBySourceOrder(orderId)
-    if (granted) {
-      return {
-        ok: true,
-        order,
-        subscription: subscriptionSettleDto(granted, nowWall),
-      }
-    }
-
-    // 没有指向本订单的订阅, 有两种可能, 必须区分:
-    //   a) 权益写失败/被删 → 用户当前没有有效权益 → 补发
-    //   b) 后续订单已续期, 一户一份的订阅被改写成指向新订单 → 用户权益完好
-    // 若把 b) 也当成补发, 一次陈旧重试就会在现有到期日上再叠一个周期(白送)。
-    // 判据: 用户此刻是否已有未过期的付费订阅。有 → 原样返回, 不重算。
-    const { subscription: existing } = await subscriptionGetEffective(familyId)
-    if (existing && existing.plan_type !== 'free' &&
-        existing.expires_at && existing.expires_at > nowWall) {
-      return {
-        ok: true,
-        order,
-        subscription: subscriptionSettleDto(existing, nowWall),
-      }
-    }
-    // 落到这里 = 订单已 paid 但权益确实缺失, 走下面的补发
-  }
-
-  // 结算基准时间: 订单已有 paid_at 就以它为准, 保证重放算出同一个 expires_at
-  const settledAt = (typeof order.paid_at === 'number' && order.paid_at > 0)
-    ? order.paid_at
-    : ((typeof paidAt === 'number' && paidAt > 0) ? paidAt : nowWall)
-
-  // pending → paid
-  if (order.status === 'pending') {
-    if (usingCloudDb) {
-      const marked = await db.markOrderPaid({
-        orderId, channel, transactionId, paidAt: settledAt,
-      })
-      if (!marked.ok) {
-        // 并发下另一路已置 paid: 回读后重入, 由上面的"已发放"分支收口
-        const fresh = await db.getOrder(orderId, user.openid)
-        if (fresh && fresh.status !== 'pending') {
-          return settlePaidOrder({ order: fresh, user, channel, transactionId, paidAt: fresh.paid_at })
-        }
-      }
-    } else {
-      order.status = 'paid'
-      order.pay_channel = channel
-      order.wx_transaction_id = transactionId
-      order.paid_at = settledAt
-      order.updated_at = nowWall
-    }
-  }
-
-  // 计算并写入权益。
-  // 补发场景(订单早已 paid)同样走这里, 但 now 传的是 settledAt 而非墙钟,
-  // 于是 computeExpiresAt 复现出与首次结算完全一致的 expires_at。
-  const { subscription: currentSub } = await subscriptionGetEffective(familyId)
-  // 懒写的 free 占位不参与续期计算, 否则补发会被当成"首购"以外的分支干扰
-  const baseSub = currentSub && currentSub.plan_type !== 'free' ? currentSub : null
-  const expires_at = computeExpiresAt(order, baseSub, settledAt)
-  const plan_type = sku.plan_type
-  const started_at = baseSub ? (baseSub.started_at || settledAt) : settledAt
-
-  let newSub
-  if (usingCloudDb) {
-    newSub = await db.upsertSubscription({
-      familyId, openid: user.openid, plan_type, started_at, expires_at,
-      source_order_id: orderId,
-    })
-  } else {
-    // 一户一份: 删旧
-    for (const [k, v] of memoryStore.subscriptions) {
-      if (v && v.family_id === familyId) memoryStore.subscriptions.delete(k)
-    }
-    const id = 'sub_' + nowWall + '_' + Math.random().toString(36).slice(2, 6)
-    newSub = {
-      _id: id, family_id: familyId, openid: user.openid,
-      plan_type, started_at, expires_at, source_order_id: orderId,
-      created_at: nowWall, updated_at: nowWall,
-    }
-    memoryStore.subscriptions.set(id, newSub)
-  }
-
-  // 重读订单返回最新状态
-  const updatedOrder = usingCloudDb
-    ? await db.getOrder(orderId, user.openid)
-    : memoryStore.orders.get(orderId)
-
-  return {
-    ok: true,
-    order: updatedOrder || order,
-    subscription: subscriptionSettleDto(newSub, nowWall),
-  }
-}
-
-// ---------- orders.mockPay ----------
-async function ordersMockPay(ctx, payload) {
-  const authErr = requireAuth(ctx); if (authErr) return authErr
-  const openid = ctx.openid
-  const { order_id } = payload || {}
-  if (!order_id) {
-    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '缺少 order_id')
-  }
-
-  // owner 鉴权
-  let user
-  if (usingCloudDb) {
-    user = await db.getUserByOpenid(openid)
-    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
-    if (user.role !== 'owner') return requireOwner(user)
-  } else {
-    user = memoryStore.users.get(openid)
-    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
-    if (user.role !== 'owner') return requireOwner(user)
-  }
-
-  // 读订单 (归属校验统一由 settlePaidOrder 兜底)
-  let order
-  if (usingCloudDb) {
-    order = await db.getOrder(order_id, openid)
-    if (!order) return fail(ERROR_CODE.FORBIDDEN, 'FORBIDDEN', '订单不属于当前用户')
-  } else {
-    const o = memoryStore.orders.get(order_id)
-    if (!o) return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '订单不存在')
-    order = o
-  }
-
-  // 首次结算用当前时间; 重试时 order.paid_at 已存在, settlePaidOrder 会优先用它
-  const settled = await settlePaidOrder({
-    order,
-    user: { openid, family_id: user.family_id },
-    channel: 'mock',
-    transactionId: 'MOCK_' + order_id,
-    paidAt: Date.now(),
-  })
-  if (!settled.ok) return settled.error
-
-  return ok({
-    order: settled.order,
-    subscription: settled.subscription,
-  })
 }
 
 // ---------- share.getQrCode ----------
@@ -1837,10 +1289,6 @@ async function usersExportData(ctx, payload) {
     if (v && v.family_id === familyId) entries.push(v)
   }
   const profile = memoryStore.financial_profiles.get(familyId) || null
-  let sub = null
-  for (const [, v] of memoryStore.subscriptions) {
-    if (v && v.family_id === familyId) { sub = v; break }
-  }
 
   return ok({
     exported_at: new Date().toISOString(),
@@ -1858,7 +1306,6 @@ async function usersExportData(ctx, payload) {
       categories: e.categories, total: e.total, created_at: e.created_at,
     })),
     profile,
-    subscription: sub ? { plan_type: sub.plan_type, started_at: sub.started_at, expires_at: sub.expires_at } : null,
   })
 }
 
@@ -1890,14 +1337,6 @@ async function usersDeleteMe(ctx, payload) {
   }
   // 删 profile
   memoryStore.financial_profiles.delete(familyId)
-  // 删 subscription
-  for (const [k, v] of memoryStore.subscriptions) {
-    if (v && v.family_id === familyId) memoryStore.subscriptions.delete(k)
-  }
-  // 删 orders
-  for (const [k, v] of memoryStore.orders) {
-    if (v && v.openid === openid) memoryStore.orders.delete(k)
-  }
   // 删 family
   memoryStore.families.delete(familyId)
   // 删 user
@@ -2005,10 +1444,6 @@ module.exports = {
   'weekly.getCurrent': weeklyGetCurrent,
   'weekly.submit': weeklySubmit,
   'weekly.copyLastWeek': weeklyCopyLastWeek,
-  // Phase 8 商业化
-  'subscription.get': subscriptionGet,
-  'orders.create': ordersCreate,
-  'orders.mockPay': ordersMockPay,
   'share.getQrCode': shareGetQrCode,
   // Phase 9 数据可携带 & 注销
   'users.exportData': usersExportData,
@@ -2031,23 +1466,15 @@ module.exports = {
   'analytics.track': analyticsTrack,
   // 帮助与反馈
   'feedback.submit': feedbackSubmit,
-  // 纯函数导出 (供测试)
-  calcEntitlements,
-  computeExpiresAt,
-  SKU_CATALOG,
   // 安全审计 (供测试)
   requireAuth,
   requireOwner,
-  // 结算边界: 后续真实支付回调 (payNotify) 复用同一入口, 不再重写权益逻辑
-  settlePaidOrder,
   _resetMemory() {
     memoryStore.users.clear()
     memoryStore.families.clear()
     memoryStore.financial_profiles.clear()
     memoryStore.budget_plans.clear()
     memoryStore.weekly_entries.clear()
-    memoryStore.subscriptions.clear()
-    memoryStore.orders.clear()
     memoryStore.app_config.clear()
     memoryStore.family_invites.clear()
     memoryStore.family_members.clear()
@@ -2062,26 +1489,6 @@ module.exports = {
     const stored = { _id: id, ...entry }
     memoryStore.weekly_entries.set(id, stored)
     return stored
-  },
-  _seedSubscription(sub) {
-    const id = sub._id || `seed_s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    const stored = { _id: id, ...sub }
-    memoryStore.subscriptions.set(id, stored)
-    return stored
-  },
-  _seedOrder(order) {
-    const id = order._id || `seed_o_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    const stored = { _id: id, ...order }
-    memoryStore.orders.set(id, stored)
-    return stored
-  },
-  /** 测试用: 列出 memoryStore 里的全部订单(断言"只落了一条") */
-  _allOrders() {
-    return Array.from(memoryStore.orders.values())
-  },
-  /** 测试用: 只清订阅表, 模拟"订单已 paid 但权益丢失" */
-  _clearSubscriptions() {
-    memoryStore.subscriptions.clear()
   },
   /** 测试用: 列出 memoryStore 反馈 */
   _allFeedbacks() {

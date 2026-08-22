@@ -17,13 +17,9 @@ const ERROR_CODE = {
   BABY_TOO_SOON:      40003, // warning 不阻断；这里用于客户端识别 severity
   UNKNOWN_ACTION:     40404,
   VALIDATION_ERROR:   40010,
-  INVALID_SKU:        40020, // Phase 8: 非法 sku（含 pro_family 占位）
   UNAUTHORIZED:       40101,
   FORBIDDEN:          40301,
-  MOCK_PAYMENT_DISABLED: 40302, // Phase 8: 真实支付模式未启用 mock
   NOT_FOUND:          40401,
-  ORDER_STATUS_INVALID:  40901, // Phase 8: 订单已 paid/failed
-  ALREADY_ENTITLED:     40921, // Phase 8: 已有同级或更高有效权益
   RATE_LIMITED:       42901,
   // Phase 10: 伴侣邀请
   INVITE_EXPIRED:      41001,

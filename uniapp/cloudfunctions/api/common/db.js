@@ -121,6 +121,10 @@ async function createFinancialProfile({ familyId }) {
 // ---------- budget_plans ----------
 async function savePlan({ familyId, planInput, planOutput }) {
   const db = getDB()
+  // 继承上一版启用态：重新测算换版本时不应要求用户再次「启用追踪」
+  const prev = await getActivePlan(familyId)
+  const prevActivatedAt = (prev && prev.activated_at) ? prev.activated_at : null
+
   // 同一 family 只一条 is_active=true
   await db.collection('budget_plans').where({
     family_id: familyId,
@@ -145,8 +149,10 @@ async function savePlan({ familyId, planInput, planOutput }) {
     baby_reserve: planOutput.baby_reserve || null,
     recommendations: planOutput.recommendations || [],
     risk_report: planOutput.risk_report || null,
+    plan_input: planInput || null,
     created_at: now_,
-    activated_at: null, // 启用追踪时由 activatePlan 单独置, 本方法不填
+    // 首次由 activatePlan 写入；已启用则随版本继承
+    activated_at: prevActivatedAt,
   }
   await db.collection('budget_plans').doc(id).set({ data })
   return { _id: id, ...data }
@@ -158,7 +164,31 @@ async function getActivePlan(familyId) {
     family_id: familyId,
     is_active: true,
   }).limit(1).get()
-  return data[0] || null
+  const plan = data[0] || null
+  // 修复历史数据：若建议为空且保存了原始输入，重新跑引擎补回建议
+  if (plan && plan.plan_input && (!plan.recommendations || !plan.recommendations.length)) {
+    try {
+      const engine = require('./engine')
+      const recalculated = engine.calcFull(plan.plan_input)
+      if (recalculated && recalculated.recommendations && recalculated.recommendations.length) {
+        await db.collection('budget_plans').doc(plan._id).update({
+          data: {
+            recommendations: recalculated.recommendations,
+            health_score: recalculated.health_score,
+            risk_level: recalculated.risk_level,
+            monthly_summary: recalculated.monthly_summary || plan.monthly_summary,
+            categories: recalculated.categories || plan.categories,
+            baby_reserve: recalculated.baby_reserve || plan.baby_reserve,
+            risk_report: recalculated.risk_report || plan.risk_report,
+          },
+        })
+        return { ...plan, recommendations: recalculated.recommendations }
+      }
+    } catch (e) {
+      console.error('[db.getActivePlan] recalc failed', e)
+    }
+  }
+  return plan
 }
 
 // ---------- weekly_entries ----------
@@ -173,81 +203,9 @@ async function getLastWeekEntry(familyId, beforeWeekStart) {
   return (res.data && res.data[0]) || null
 }
 
-// ============================================================
-// Phase 8 商业化
-// ============================================================
-
-// ---------- subscriptions ----------
+// ---------- 唯一索引冲突判定 ----------
 /**
- * 按 family_id 读订阅(始终返回一条,缺则视为 free)
- * 不校验过期, 业务层 getActiveSubscription 才校验
- */
-async function getSubscriptionByFamily(familyId) {
-  const db = getDB()
-  const { data } = await db.collection('subscriptions').where({ family_id: familyId }).limit(1).get()
-  return (data && data[0]) || null
-}
-
-/**
- * 按 source_order_id 读订阅(结算幂等判定用)
- * 命中说明该订单的权益已经发放过, 调用方必须原样返回而不是重算 expires_at
- */
-async function getSubscriptionBySourceOrder(orderId) {
-  if (!orderId) return null
-  const db = getDB()
-  const { data } = await db.collection('subscriptions').where({ source_order_id: orderId }).limit(1).get()
-  return (data && data[0]) || null
-}
-
-/**
- * upsert 订阅(按 family_id 业务主键)
- * 一户一份, 覆盖式写; 旧 plan_type 信息丢失由 entitlements 重算补偿
- */
-async function upsertSubscription({ familyId, openid, plan_type, started_at, expires_at, source_order_id }) {
-  const db = getDB()
-  const now_ = now()
-  const existing = await getSubscriptionByFamily(familyId)
-  if (existing && existing._id) {
-    await db.collection('subscriptions').doc(existing._id).update({
-      data: { openid, plan_type, started_at, expires_at, source_order_id, updated_at: now_ }
-    })
-    return { ...existing, openid, plan_type, started_at, expires_at, source_order_id, updated_at: now_ }
-  }
-  const res = await db.collection('subscriptions').add({
-    data: {
-      family_id: familyId,
-      openid,
-      plan_type,
-      started_at: started_at || now_,
-      expires_at: expires_at || null,
-      source_order_id: source_order_id || null,
-      created_at: now_,
-      updated_at: now_,
-    }
-  })
-  return { _id: res._id, family_id: familyId, openid, plan_type, started_at, expires_at, source_order_id, created_at: now_, updated_at: now_ }
-}
-
-/**
- * 读"有效"订阅(未过期或永久)
- * 返回 { subscription, effectivePlanType, isExpired }
- *  - 无记录 → effectivePlanType='free', isExpired=false
- *  - 有记录但 expires_at < now → effectivePlanType='free'(DB 字段保留), isExpired=true
- */
-async function getActiveSubscription(familyId) {
-  const sub = await getSubscriptionByFamily(familyId)
-  if (!sub) {
-    return { subscription: null, effectivePlanType: 'free', isExpired: false }
-  }
-  const nowMs = Date.now()
-  const isExpired = sub.expires_at ? sub.expires_at <= nowMs : false
-  const effectivePlanType = isExpired ? 'free' : sub.plan_type
-  return { subscription: sub, effectivePlanType, isExpired }
-}
-
-// ---------- orders ----------
-/**
- * 判定是否唯一索引冲突 (orders 的 (openid, client_request_key) 唯一索引)
+ * 判定是否唯一索引冲突 (family_invites / family_members 的唯一索引)
  * 云开发底层是 MongoDB, 冲突走 E11000; 不同版本 SDK 的字段名不一致, 宽松匹配
  */
 function isDuplicateKeyError(e) {
@@ -257,97 +215,332 @@ function isDuplicateKeyError(e) {
   return code === 11000 || code === -501001 || /duplicate key|E11000/i.test(msg)
 }
 
+// ---------- 数据导出 (Phase 9) ----------
 /**
- * 按 openid + client_request_id 读订单(下单幂等去重用)
- * 命中返回完整订单文档, 未命中返回 null
+ * 导出用户全量数据 (数据可携带权)
+ * @returns {{ user, family, plans, entries, profile }}
  */
-async function getOrderByClientRequest({ openid, clientRequestId }) {
-  if (!openid || !clientRequestId) return null
+async function exportUserData(openid) {
   const db = getDB()
-  // 主查: client_request_key 是非空规范化键, 被唯一索引 (openid, client_request_key) 覆盖
-  const { data } = await db.collection('orders')
-    .where({ openid, client_request_key: clientRequestId })
+
+  // 1. 用户
+  const user = await getUserByOpenid(openid)
+  if (!user) return null
+  const familyId = user.family_id
+
+  // 2. 家庭
+  const family = await getFamily(familyId)
+
+  // 3. 全部预算方案 (不限制 is_active)
+  const { data: plans } = await db.collection('budget_plans')
+    .where({ family_id: familyId })
+    .orderBy('created_at', 'desc')
+    .get()
+    .catch(() => ({ data: [] }))
+
+  // 4. 全部周记账
+  const { data: entries } = await db.collection('weekly_entries')
+    .where({ family_id: familyId })
+    .orderBy('week_start', 'desc')
+    .get()
+    .catch(() => ({ data: [] }))
+
+  // 5. 财务档案
+  const { data: profiles } = await db.collection('financial_profiles')
+    .where({ family_id: familyId })
     .limit(1)
     .get()
-  if (data && data[0]) return data[0]
-  // 回退: 本次改动之前落库的订单只写了 client_request_id, 没有 client_request_key。
-  // 回填完成后(见 scripts/create-collections.js 的迁移说明)这段可以删。
-  // 保留它是为了避免老订单重试时被判为"新请求"而重复下单。
-  const legacy = await db.collection('orders')
-    .where({ openid, client_request_id: clientRequestId })
-    .limit(1)
-    .get()
-  return (legacy.data && legacy.data[0]) || null
+    .catch(() => ({ data: [] }))
+  const profile = (profiles && profiles[0]) || null
+
+  return {
+    exported_at: new Date().toISOString(),
+    user: { nickname: user.nickname, avatar: user.avatar, role: user.role, created_at: user.created_at },
+    family: family ? { name: family.name, stage: family.stage, city: family.city, created_at: family.created_at } : null,
+    plans: (plans || []).map(p => ({
+      version: p.version, health_score: p.health_score, risk_level: p.risk_level,
+      is_active: p.is_active, activated_at: p.activated_at,
+      monthly_summary: p.monthly_summary, categories: p.categories,
+      baby_reserve: p.baby_reserve, recommendations: p.recommendations,
+      created_at: p.created_at,
+    })),
+    entries: (entries || []).map(e => ({
+      week_start: e.week_start, week_end: e.week_end,
+      categories: e.categories, total: e.total, created_at: e.created_at,
+    })),
+    profile,
+  }
+}
+
+// ---------- 账号注销 (Phase 9) ----------
+/**
+ * 级联删除用户所有数据
+ * 顺序: entries → plans → profile → family → user
+ */
+async function deleteUserData(openid) {
+  const db = getDB()
+
+  // 1. 查用户 → 拿 family_id
+  const user = await getUserByOpenid(openid)
+  if (!user) return { deleted: false, reason: '用户不存在' }
+
+  const familyId = user.family_id
+
+  // 2. 删周记账
+  await db.collection('weekly_entries').where({ family_id: familyId }).remove().catch(() => {})
+
+  // 3. 删预算方案
+  await db.collection('budget_plans').where({ family_id: familyId }).remove().catch(() => {})
+
+  // 4. 删财务档案
+  await db.collection('financial_profiles').where({ family_id: familyId }).remove().catch(() => {})
+
+  // 5. 删家庭
+  await db.collection('families').where({ _id: familyId }).remove().catch(() => {})
+
+  // 6. 删用户
+  await db.collection('users').where({ _openid: openid }).remove().catch(() => {})
+
+  return { deleted: true }
+}
+
+// ---------- family_invites (Phase 10: 伴侣邀请) ----------
+/**
+ * 生成随机邀请码（8 位大写字母数字）
+ */
+function generateInviteCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // 排除易混淆字符 0/O/1/I
+  let code = ''
+  for (let i = 0; i < 8; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return code
 }
 
 /**
- * 创建 pending 订单; amount_fen 由调用方从 SKU 表取
- * 幂等: 同一 openid+client_request_id 只落一条 —— 由唯一索引
- * (openid, client_request_key) 兜底, 冲突时调用方 re-read 返回原订单
+ * 创建家庭邀请码（24 小时有效）
  */
-async function createOrder({ openid, familyId, sku, amount_fen, client_request_id = null }) {
+async function createFamilyInvite({ familyId, openid }) {
   const db = getDB()
   const now_ = now()
-  const id = genId('ord')
+  const code = generateInviteCode()
+  const expiresAt = new Date(now_.getTime() + 24 * 3600 * 1000)
   const doc = {
+    invite_code: code,
     family_id: familyId,
-    openid,
-    sku,
-    amount_fen,
-    status: 'pending',
-    pay_channel: 'mock',         // 本期固定 mock; 真支付上线后改为 'wxpay'
-    out_trade_no: id,
-    wx_transaction_id: null,
-    paid_at: null,
-    client_request_id: client_request_id || null,
-    // 非空规范化键: 无 client_request_id 时退化为 _id(天然唯一), 保证唯一索引可建
-    client_request_key: client_request_id || id,
+    created_by: openid,
     created_at: now_,
-    updated_at: now_,
+    expires_at: expiresAt,
+    used: false,
+    used_by: null,
+    used_at: null,
   }
-  await db.collection('orders').doc(id).set({ data: doc })
-  return { _id: id, ...doc }
-}
-
-/**
- * 按 order_id 读订单, 强制校验 openid 归属
- * 越权返回 null (handler 层返回 40301)
- */
-async function getOrder(orderId, openid) {
-  if (!orderId) return null
-  const db = getDB()
-  const before = await db.collection('orders').doc(orderId).get()
-  const order = Array.isArray(before.data) ? before.data[0] : before.data
-  if (!order || !order._id) return null
-  if (openid && order.openid !== openid) return null  // 越权
-  return order
-}
-
-/**
- * 置订单为 paid; 写 paid_at + wx_transaction_id + updated_at
- *
- * 条件更新: 只有仍处于 pending 的订单会被改写 (where 而非 doc().update()),
- * 并发重试/支付回调与 mockPay 同时到达时, 只有一方的 paid_at 生效,
- * 另一方拿到 updated=0 → 调用方回读订单走"已支付"分支, 不会二次发放权益。
- *
- * @param {number} [paidAt] 结算时间; 省略则取当前时间。回调补单时必须传原始支付时间。
- * @returns {{ ok: boolean, updated: number, paid_at: number }}
- */
-async function markOrderPaid({ orderId, channel, transactionId, paidAt }) {
-  if (!orderId) throw new Error('markOrderPaid: orderId 必填')
-  const db = getDB()
-  const now_ = typeof paidAt === 'number' && paidAt > 0 ? paidAt : Date.now()
-  const res = await db.collection('orders').where({ _id: orderId, status: 'pending' }).update({
-    data: {
-      status: 'paid',
-      pay_channel: channel || 'mock',
-      wx_transaction_id: transactionId || null,
-      paid_at: now_,
-      updated_at: Date.now(),
+  // 重试避免随机码碰撞（概率极低但防御）
+  try {
+    await db.collection('family_invites').add({ data: doc })
+  } catch (e) {
+    if (isDuplicateKeyError(e)) {
+      // 换个码重试一次
+      doc.invite_code = generateInviteCode()
+      await db.collection('family_invites').add({ data: doc })
+    } else {
+      throw e
     }
+  }
+  return doc
+}
+
+/**
+ * 按邀请码查找未被使用的有效邀请
+ */
+async function getFamilyInvite(inviteCode) {
+  if (!inviteCode) return null
+  const db = getDB()
+  const { data } = await db.collection('family_invites').where({ invite_code: inviteCode }).limit(1).get()
+  return (data && data[0]) || null
+}
+
+/**
+ * 标记邀请码已使用
+ */
+async function markInviteUsed(inviteCode, usedBy) {
+  if (!inviteCode) return
+  const db = getDB()
+  await db.collection('family_invites').where({ invite_code: inviteCode }).update({
+    data: { used: true, used_by: usedBy, used_at: now() }
   })
-  const updated = (res && res.stats && typeof res.stats.updated === 'number') ? res.stats.updated : 0
-  return { ok: updated > 0, updated, paid_at: now_ }
+}
+
+/**
+ * 添加家庭成员
+ */
+async function addFamilyMember({ familyId, openid, nickname, avatar, role = 'member' }) {
+  const db = getDB()
+  const now_ = now()
+  // 一户一人唯一索引兜底
+  try {
+    await db.collection('family_members').add({
+      data: {
+        family_id: familyId,
+        openid,
+        nickname: nickname || '',
+        avatar: avatar || '',
+        role,
+        joined_at: now_,
+      }
+    })
+  } catch (e) {
+    if (isDuplicateKeyError(e)) {
+      return null // 已是成员，幂等
+    }
+    throw e
+  }
+  return { family_id: familyId, openid, role, joined_at: now_ }
+}
+
+/**
+ * 获取家庭成员列表
+ */
+async function getFamilyMembers(familyId) {
+  const db = getDB()
+  const { data } = await db.collection('family_members').where({ family_id: familyId }).get()
+  return data || []
+}
+
+/**
+ * 获取家庭真正的 owner（从 users 表查 role='owner'）
+ */
+async function getFamilyOwner(familyId) {
+  const db = getDB()
+  const { data } = await db.collection('users').where({ family_id: familyId, role: 'owner' }).limit(1).get()
+  if (!data || !data[0]) return null
+  const u = data[0]
+  return { openid: u._openid, nickname: u.nickname || '', avatar: u.avatar || '', role: 'owner' }
+}
+
+/**
+ * 获取家庭的行动建议采纳状态（Phase 10: 行动清单写库）
+ */
+async function getActionStatuses(familyId) {
+  return withCollection('action_statuses', async () => {
+    const db = getDB()
+    const { data } = await db.collection('action_statuses').where({ family_id: familyId }).get()
+    return data || []
+  })
+}
+
+/**
+ * 保存单条建议采纳状态（upsert: family_id + rec_id 唯一）
+ */
+async function setActionStatus({ familyId, recId, status }) {
+  return withCollection('action_statuses', async () => {
+    const db = getDB()
+    const now_ = now()
+    const { data } = await db.collection('action_statuses').where({ family_id: familyId, rec_id: recId }).limit(1).get()
+    if (data && data[0] && data[0]._id) {
+      await db.collection('action_statuses').doc(data[0]._id).update({
+        data: { status, updated_at: now_ },
+      })
+      return { family_id: familyId, rec_id: recId, status, updated_at: now_ }
+    }
+    await db.collection('action_statuses').add({
+      data: { family_id: familyId, rec_id: recId, status, updated_at: now_ },
+    })
+    return { family_id: familyId, rec_id: recId, status, updated_at: now_ }
+  })
+}
+
+// ---------- Phase 10 订阅消息 ----------
+/**
+ * 读单个用户的订阅记录（openid + template_id）
+ */
+async function getSubscribeRecord(openid, templateId) {
+  return withCollection('subscribe_records', async () => {
+    const db = getDB()
+    const { data } = await db.collection('subscribe_records').where({ openid, template_id: templateId }).limit(1).get()
+    return (data && data[0]) || null
+  })
+}
+
+/**
+ * 订阅授权成功：配额 +1（upsert）
+ */
+async function incSubscribeQuota({ openid, familyId, templateId }) {
+  return withCollection('subscribe_records', async () => {
+    const db = getDB()
+    const _ = db.command
+    const now_ = now()
+    const { data } = await db.collection('subscribe_records').where({ openid, template_id: templateId }).limit(1).get()
+    if (data && data[0] && data[0]._id) {
+      await db.collection('subscribe_records').doc(data[0]._id).update({
+        data: { quota: _.inc(1), total: _.inc(1), family_id: familyId, updated_at: now_ },
+      })
+      return { openid, template_id: templateId, quota: (data[0].quota || 0) + 1, total: (data[0].total || 0) + 1 }
+    }
+    await db.collection('subscribe_records').add({
+      data: { openid, family_id: familyId, template_id: templateId, quota: 1, total: 1, created_at: now_, updated_at: now_ },
+    })
+    return { openid, template_id: templateId, quota: 1, total: 1 }
+  })
+}
+
+/**
+ * 推送成功后：配额 -1（不足时返回 false，由调用方报错）
+ */
+async function decrementSubscribeQuota(openid, templateId) {
+  return withCollection('subscribe_records', async () => {
+    const db = getDB()
+    const _ = db.command
+    const { data } = await db.collection('subscribe_records').where({ openid, template_id: templateId }).limit(1).get()
+    if (!data || !data[0] || !data[0]._id) return false
+    const quota = data[0].quota || 0
+    if (quota <= 0) return false
+    await db.collection('subscribe_records').doc(data[0]._id).update({
+      data: { quota: _.inc(-1), updated_at: now() },
+    })
+    return { openid, template_id: templateId, quota: quota - 1 }
+  })
+}
+
+/**
+ * 按模板查全部订阅者（定时批量推送用）
+ */
+async function getSubscribeRecordsByTemplate(templateId) {
+  return withCollection('subscribe_records', async () => {
+    const db = getDB()
+    const { data } = await db.collection('subscribe_records').where({ template_id: templateId }).get()
+    return data || []
+  })
+}
+
+// ---------- Phase 10 埋点系统 ----------
+/**
+ * 批量写入埋点事件（analytics_events）
+ */
+async function insertAnalyticsEvents(events) {
+  if (!events || !events.length) return 0
+  return withCollection('analytics_events', async () => {
+    const db = getDB()
+    await db.collection('analytics_events').add({
+      data: events.map((e) => ({
+        openid: e.openid || '',
+        event: e.event,
+        data: e.data || {},
+        page: e.page || '',
+        platform: e.platform || '',
+        client_ts: e.client_ts || Date.now(),
+        created_at: now(),
+      })),
+    })
+    return events.length
+  })
+}
+
+async function updateUserFamilyId(openid, familyId, role) {
+  const db = getDB()
+  await db.collection('users').where({ _openid: openid }).update({
+    data: { family_id: familyId, role, updated_at: now() }
+  })
 }
 
 // ---------- app_config ----------
@@ -459,6 +652,85 @@ async function saveWeeklyEntry(familyId, weekStart, weekEnd, categories) {
   return { _id: res._id, family_id: familyId, week_start: weekStart, week_end: weekEnd, categories, total, created_at: now_, updated_at: now_ }
 }
 
+// ---------- feedbacks（帮助与反馈） ----------
+function isCollectionMissingError(e) {
+  const msg = String((e && (e.errMsg || e.message)) || e || '')
+  return /COLLECTION_NOT_EXIST|collection not exist|Db or Table not exist|not exists/i.test(msg)
+}
+
+// 已确认存在的集合缓存（避免每次调用都重复检查）
+const ensuredCollections = new Set()
+
+/**
+ * 集合缺失时自动创建（幂等）。与 createFeedback 的容错一致，
+ * 让 Phase 10 新集合（action_statuses / subscribe_records / analytics_events）
+ * 在未跑建库脚本时也能自愈，而不是让前端收到 ENGINE_ERROR。
+ */
+async function ensureCollection(name) {
+  if (ensuredCollections.has(name)) return
+  const db = getDB()
+  try {
+    await db.createCollection(name)
+  } catch (e) {
+    // 并发下可能已被创建，忽略"已存在"
+    if (!/already exists|Duplicated|exists/i.test(String((e && (e.errMsg || e.message)) || ''))) {
+      throw e
+    }
+  }
+  ensuredCollections.add(name)
+}
+
+/**
+ * 执行 fn；若因集合缺失失败，自动建集合后重试一次。
+ */
+async function withCollection(name, fn) {
+  try {
+    return await fn()
+  } catch (e) {
+    if (!isCollectionMissingError(e)) throw e
+    await ensureCollection(name)
+    return await fn()
+  }
+}
+
+/**
+ * 写入一条用户反馈。openid 可为 null（测试无微信上下文时）。
+ * 若集合尚未创建，尝试 createCollection 后重试一次。
+ */
+async function createFeedback({ openid, type, content, contact, client_meta, status = 'new' }) {
+  const db = getDB()
+  const now_ = Date.now()
+  const doc = {
+    openid: openid || null,
+    type,
+    content,
+    contact: contact || '',
+    client_meta: client_meta && typeof client_meta === 'object' ? client_meta : {},
+    created_at: now_,
+    status: status || 'new',
+  }
+
+  async function addOnce() {
+    const { _id } = await db.collection('feedbacks').add({ data: doc })
+    return { _id, ...doc }
+  }
+
+  try {
+    return await addOnce()
+  } catch (e) {
+    if (!isCollectionMissingError(e)) throw e
+    try {
+      await db.createCollection('feedbacks')
+    } catch (createErr) {
+      // 并发下可能已被创建，忽略“已存在”
+      if (!/already exists|Duplicated|exists/i.test(String((createErr && (createErr.errMsg || createErr.message)) || ''))) {
+        console.error('[db.createFeedback] createCollection failed:', createErr)
+      }
+    }
+    return await addOnce()
+  }
+}
+
 module.exports = {
   getDB,
   getUserByOpenid,
@@ -475,16 +747,31 @@ module.exports = {
   saveWeeklyEntry,
   getLastWeekEntry,
   currentMonthRange,
-  // ---------- Phase 8 商业化 ----------
-  getSubscriptionByFamily,
-  upsertSubscription,
-  getActiveSubscription,
-  getSubscriptionBySourceOrder,
-  createOrder,
-  getOrder,
-  getOrderByClientRequest,
+  // ---------- 唯一索引冲突判定 ----------
   isDuplicateKeyError,
-  markOrderPaid,
   getAppConfig,
   setAppConfig,
+  // ---------- Phase 9 数据可携带 & 注销 ----------
+  exportUserData,
+  deleteUserData,
+  // ---------- Phase 10 伴侣邀请 ----------
+  createFamilyInvite,
+  getFamilyInvite,
+  markInviteUsed,
+  addFamilyMember,
+  getFamilyMembers,
+  getFamilyOwner,
+  updateUserFamilyId,
+  // ---------- Phase 10 行动清单写库 ----------
+  getActionStatuses,
+  setActionStatus,
+  // ---------- Phase 10 订阅消息 ----------
+  getSubscribeRecord,
+  incSubscribeQuota,
+  decrementSubscribeQuota,
+  getSubscribeRecordsByTemplate,
+  // ---------- Phase 10 埋点系统 ----------
+  insertAnalyticsEvents,
+  // ---------- 帮助与反馈 ----------
+  createFeedback,
 }
