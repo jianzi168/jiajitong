@@ -438,6 +438,25 @@ test('Phase 10 — 伴侣邀请', { concurrency: false }, async (t) => {
     assert.equal(res.code, 0, '空家庭不应被新守卫误拦')
     assert.ok(res.data.invite_code, '应返回 invite_code')
   })
+
+  // ============================================================
+  // I-20: 家庭已有伴侣后，第二个邀请码无法再加入（多邀请码绕过）
+  // ============================================================
+  await t.test('I-20 家庭已有伴侣后，第二个邀请码无法再加入（多邀请码绕过）', async () => {
+    await h['user.bootstrap'](fakeCtx('userA'), { nickname: '晓雯' })
+    const a1 = await h['families.inviteCreate'](fakeCtx('userA'), {})
+    assert.equal(a1.code, 0, '空家庭可生成邀请码 A')
+    const a2 = await h['families.inviteCreate'](fakeCtx('userA'), {})
+    assert.equal(a2.code, 0, '空家庭可生成邀请码 B（未撤销旧码）')
+
+    await h['user.bootstrap'](fakeCtx('userB'), { nickname: '阿哲' })
+    const joinA = await h['families.inviteJoin'](fakeCtx('userB'), { invite_code: a1.data.invite_code })
+    assert.equal(joinA.code, 0, '伴侣用 A 加入成功')
+
+    await h['user.bootstrap'](fakeCtx('userC'), { nickname: '路人丙' })
+    const joinB = await h['families.inviteJoin'](fakeCtx('userC'), { invite_code: a2.data.invite_code })
+    assert.equal(joinB.code, 41008, '家庭已有伴侣后 B 无法再加入')
+  })
 })
 
 // 提供测试用内存导出（给 handlers/index.js 加 _seedInvite 支持）

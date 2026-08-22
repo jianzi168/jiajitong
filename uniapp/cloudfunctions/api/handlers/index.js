@@ -1294,6 +1294,12 @@ async function familiesInviteJoin(ctx, payload) {
     return fail(ERROR_CODE.INVITE_ALREADY_USED, 'INVITE_ALREADY_USED', '邀请码已被使用')
   }
 
+  // 家庭已有伴侣（成员）时不能再加入（保持 owner + 1 伴侣不变量，防多邀请码绕过）
+  const familyMembers = await listFamilyMembers(invite.family_id)
+  if (familyMembers.length > 0) {
+    return fail(ERROR_CODE.FAMILY_ALREADY_PAIRED, 'FAMILY_ALREADY_PAIRED', '该家庭已有伴侣加入，无法再加入')
+  }
+
   // 如果已在另一个家庭且是 owner，检查是否有实际数据
   // 没有方案的 owner 是 bootstrap 自动创建的空家庭，允许加入对方家庭
   if (joinerUser.role === 'owner' && joinerUser.family_id !== invite.family_id) {
