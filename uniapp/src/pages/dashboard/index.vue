@@ -1,14 +1,54 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import FloatNav from '@/components/FloatNav.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
 import { usePlanStore } from '@/stores/plan'
-import { useSubscriptionStore } from '@/stores/subscription'
+import { getFamilyMembers } from '@/services/api'
+import { getCapsuleSafeArea } from '@/utils/capsule'
+import { trackPage } from '@/utils/analytics'
 
 const store = usePlanStore()
-const subStore = useSubscriptionStore()
-const statusBarHeight = (uni.getSystemInfoSync().statusBarHeight || 20) * 2
+
+const { statusBarHeight, navBarHeight, capsuleReserveRight } = getCapsuleSafeArea()
+const actionRowHeight = typeof uni.upx2px === 'function' ? uni.upx2px(80) : 40
+const headerPlaceholder = statusBarHeight + navBarHeight + actionRowHeight
+
+// Phase 10: 家庭成员协同（owner + members 头像组）
+const familyMembers = ref([])
+const familyLoaded = ref(false)
+
+async function loadFamily() {
+  try {
+    const res = await getFamilyMembers()
+    const list = []
+    if (res && res.owner) list.push({ ...res.owner, _isOwner: true })
+    ;(res && res.members ? res.members : []).forEach((m) => list.push({ ...m, _isOwner: false }))
+    familyMembers.value = list
+  } catch (e) {
+    // 未登录 / 无家庭时静默
+  } finally {
+    familyLoaded.value = true
+  }
+}
+
+const familySize = computed(() => familyMembers.value.length)
+const hasPartner = computed(() => familySize.value >= 2)
+const familyCaption = computed(() => {
+  if (!familyLoaded.value) return ''
+  return hasPartner.value ? `${familySize.value} 人共同管理` : '邀请伴侣一起管理'
+})
+
+function avatarText(m) {
+  const n = (m.nickname || '').trim()
+  if (n) return n.slice(0, 1)
+  return m._isOwner ? '家' : '伴'
+}
+
+function onPartner() {
+  uni.navigateTo({ url: '/pages/partner/index' })
+}
 
 // 当前月份显示文案（如 "7月预算"）
 const monthLabel = computed(() => {
@@ -24,21 +64,15 @@ const categories = computed(() => dashboard.value.categories || [])
 const totals = computed(() => dashboard.value.totals || null)
 const babyReserve = computed(() => dashboard.value.baby_reserve || null)
 
-// Phase 8: free 看板只显示前 2 类真实数据, 后 5 类占位
-const FREE_VISIBLE_CATS = 2
-const visibleCategories = computed(() => {
-  if (subStore.canViewFull) return categories.value
-  return categories.value.map((c, idx) => {
-    if (idx < FREE_VISIBLE_CATS) return c
-    return { ...c, used: null, pct: 0, color: 'green', _locked: true }
-  })
-})
+// Phase 10 商业化关闭：7 类全量展示（原 free 只看前 2 类 + 锁定占位）
+const visibleCategories = categories
 
 onShow(async () => {
+  trackPage('dashboard')
   try {
     await Promise.all([
       store.loadDashboard(),
-      subStore.refresh(),
+      loadFamily(),
     ])
   } catch (e) {
     uni.showToast({ title: e.userHint || e.message || '加载失败', icon: 'none' })
@@ -46,6 +80,7 @@ onShow(async () => {
 })
 
 async function onActivate() {
+  if (store.loading) return
   try {
     uni.showLoading({ title: '启用中...' })
     await store.activate()
@@ -70,18 +105,43 @@ function onActions() {
 function onReview() {
   uni.navigateTo({ url: '/pages/review/index' })
 }
-function onPaywall() {
-  uni.navigateTo({ url: '/pages/paywall/index?from=dashboard' })
-}
+// Phase 10 商业化关闭：支付入口已屏蔽（原 onPaywall 跳 /pages/paywall/index 已移除）
 </script>
 
 <template>
   <view class="screen">
-    <view class="simple-header" :style="{ paddingTop: statusBarHeight + 'rpx' }">
-      <text class="page-title">{{ monthLabel }}</text>
+    <view class="dash-header">
+      <view class="dash-header-status" :style="{ height: statusBarHeight + 'px' }"></view>
+      <view
+        class="dash-header-nav"
+        :style="{
+          height: navBarHeight + 'px',
+          paddingRight: capsuleReserveRight + 'px',
+        }"
+      >
+        <text class="page-title dash-title">{{ monthLabel }}</text>
+      </view>
+      <!-- 头像 / 副文案放在胶囊下方，避免与微信原生按钮重叠 -->
+      <view class="dash-header-action">
+        <text v-if="familyCaption" class="header-caption">{{ familyCaption }}</text>
+        <view class="family-avatars" @tap="onPartner">
+          <view
+            v-for="(m, i) in familyMembers"
+            :key="m.openid || i"
+            class="family-avatar"
+          >
+            <image v-if="m.avatar" class="family-avatar-img" :src="m.avatar" mode="aspectFill" />
+            <text v-else class="family-avatar-text">{{ avatarText(m) }}</text>
+          </view>
+          <view v-if="familyLoaded && !hasPartner" class="family-avatar family-avatar-add">
+            <text class="family-avatar-add-text">＋</text>
+          </view>
+        </view>
+      </view>
     </view>
+    <view class="simple-header-placeholder" :style="{ height: headerPlaceholder + 'px' }"></view>
 
-    <view class="screen-body screen-body-scroll screen-body-tab">
+    <ScreenBody tab class="screen-body-scroll">
       <!-- 无方案：不能 activate，引导去向导 -->
       <view v-if="!loading && !hasPlan" class="empty-wrap">
         <text class="empty-title">还没有预算方案</text>
@@ -135,24 +195,17 @@ function onPaywall() {
             v-for="c in visibleCategories"
             :key="c.id"
             class="category-cell"
-            :class="{ 'category-locked': c._locked }"
-            @tap="c._locked ? onPaywall() : onWeekly()"
+            @tap="onWeekly()"
           >
             <view class="cell-header">
-              <text>{{ c.name }}<text v-if="c._locked" class="lock-emoji"> 🔒</text></text>
-              <text v-if="c._locked" class="lock-text">解锁 Pro 查看</text>
-              <text v-else>¥{{ c.used }} / ¥{{ c.suggested }}</text>
+              <text>{{ c.name }}</text>
+              <text>¥{{ c.used }} / ¥{{ c.suggested }}</text>
             </view>
-            <ProgressBar v-if="!c._locked" :pct="c.pct" :color="c.color" size="sm" />
-            <view v-else class="locked-bar" />
+            <ProgressBar :pct="c.pct" :color="c.color" size="sm" />
           </view>
         </view>
 
-        <!-- Phase 8: free 用户显示 Pro CTA 卡 -->
-        <view v-if="!subStore.canViewFull" class="pro-cta glass-card" @tap="onPaywall">
-          <text class="pro-cta-title">解锁 Pro 查看完整 7 类趋势</text>
-          <text class="pro-cta-sub">¥68 / 年 · 含月度复盘 + 全部建议 + PDF 导出</text>
-        </view>
+        <!-- Phase 10 商业化关闭：Pro CTA 卡已移除（原 ¥68/年 解锁入口） -->
 
         <view class="action-row">
           <button class="grad-btn" @tap="onWeekly">填写本周支出</button>
@@ -164,7 +217,7 @@ function onPaywall() {
           <text class="bottom-link-chev">›</text>
         </view>
       </view>
-    </view>
+    </ScreenBody>
 
     <FloatNav active="dashboard" />
   </view>
@@ -197,11 +250,66 @@ function onPaywall() {
   font-size: 28rpx;
   color: var(--color-sub);
 }
-.simple-header {
+.dash-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(250, 248, 245, 0.92);
+  backdrop-filter: blur(16rpx);
+}
+.dash-header-nav {
   display: flex;
   align-items: center;
-  padding: 16rpx 40rpx 32rpx;
+  padding-left: 40rpx;
+  box-sizing: border-box;
 }
+.dash-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.dash-header-action {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+  padding: 8rpx 40rpx 16rpx;
+  min-height: 80rpx;
+  box-sizing: border-box;
+}
+/* Phase 10: 家庭成员头像协同区 */
+.family-avatars {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.family-avatar {
+  width: 68rpx;
+  height: 68rpx;
+  border-radius: 50%;
+  background: var(--grad-hero);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 4rpx solid var(--color-surface);
+  margin-left: -16rpx;
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-soft);
+}
+.family-avatar:first-child { margin-left: 0; }
+.family-avatar-img { width: 100%; height: 100%; }
+.family-avatar-text { font-size: 26rpx; font-weight: 700; }
+.family-avatar-add {
+  background: rgba(0, 0, 0, 0.05);
+  border: 2rpx dashed rgba(0, 0, 0, 0.18);
+  box-shadow: none;
+}
+.family-avatar-add-text { color: var(--color-text-3); font-size: 30rpx; line-height: 1; }
 .bento-grid-gap { margin-top: 8rpx; }
 .bottom-link {
   display: flex;

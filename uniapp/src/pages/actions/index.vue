@@ -1,69 +1,112 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, computed, onMounted } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
 import NavBar from '@/components/NavBar.vue'
 import { usePlanStore } from '@/stores/plan'
-import { useSubscriptionStore } from '@/stores/subscription'
+import { getActionStatus, saveActionStatus } from '@/services/api'
+import { track, trackPage } from '@/utils/analytics'
 
 const planStore = usePlanStore()
-const subStore = useSubscriptionStore()
 
 const recStatus = ref({}) // { recId: 'accepted' | 'later' | 'ignored' }
-const FREE_VISIBLE_RECS = 1
 
 onMounted(async () => {
+  trackPage('actions')
   try {
     const saved = uni.getStorageSync('recStatus') || {}
     recStatus.value = saved
   } catch (e) {}
-  if (!planStore.activePlan) {
+  // activePlan 缺失或为裁剪快照（缺 recommendations，如来自旧 dashboard 快照）→ 从云端补拉完整版
+  const needFull = !planStore.activePlan ||
+    !(planStore.activePlan.recommendations && planStore.activePlan.recommendations.length)
+  if (needFull) {
     try { await planStore.loadActive() } catch (e) {}
   }
-})
-
-onShow(async () => {
-  try { await subStore.refresh() } catch (e) {}
+  // 兜底链：globalData（向导刚完成）→ 本地缓存（规划书页写入）→ 云端
+  if (!planStore.activePlan || !(planStore.activePlan.recommendations && planStore.activePlan.recommendations.length)) {
+    const app = getApp()
+    const fallback = app?.globalData?.fullPlanResult
+    if (fallback && fallback.health_score) {
+      planStore.activePlan = fallback
+    } else {
+      try {
+        const cached = uni.getStorageSync('activePlanCache')
+        if (cached && cached.health_score && Array.isArray(cached.recommendations)) {
+          planStore.activePlan = cached
+        }
+      } catch (e) {}
+    }
+  }
+  // Phase 10: 云端采纳状态同步（云端优先；云端空但本地有 → 全量推送首次迁移）
+  try {
+    const cloud = await getActionStatus()
+    const cloudMap = (cloud && cloud.statuses) || {}
+    if (Object.keys(cloudMap).length) {
+      recStatus.value = { ...recStatus.value, ...cloudMap }
+      persistLocal(recStatus.value)
+    } else if (Object.keys(recStatus.value).length) {
+      for (const [k, v] of Object.entries(recStatus.value)) {
+        await saveActionStatus({ rec_id: k, status: v }).catch(() => {})
+      }
+    }
+  } catch (e) {
+    // 云函数不可用时继续走 localStorage
+  }
 })
 
 const allRecs = computed(() => {
   return (planStore.activePlan && planStore.activePlan.recommendations) || []
 })
 
-const visibleRecs = computed(() => {
-  if (subStore.canViewFull) return allRecs.value
-  return allRecs.value.slice(0, FREE_VISIBLE_RECS)
+const hasActivePlan = computed(() => {
+  return !!(planStore.activePlan && planStore.activePlan.health_score)
 })
 
-const hiddenCount = computed(() => Math.max(0, allRecs.value.length - visibleRecs.value.length))
+const visibleRecs = computed(() => {
+  // Phase 10 商业化关闭：全量展示（原 free 只显示 1 条 + 解锁 CTA）
+  return allRecs.value
+})
+
+const hiddenCount = computed(() => 0)
 
 function severityClass(sev) {
   return 'sev-' + (sev || 'yellow')
 }
+function persistLocal(s) {
+  try { uni.setStorageSync('recStatus', s) } catch (e) {}
+}
 function setStatus(recId, status) {
-  recStatus.value = { ...recStatus.value, [recId]: status }
-  try { uni.setStorageSync('recStatus', recStatus.value) } catch (e) {}
+  const prev = recStatus.value
+  recStatus.value = { ...prev, [recId]: status }
+  persistLocal(recStatus.value)
+  track('action_set', { recId, status })
+  // 云端写入；失败回滚
+  saveActionStatus({ rec_id: recId, status }).catch(() => {
+    recStatus.value = prev
+    persistLocal(prev)
+    uni.showToast({ title: '保存失败，请检查网络', icon: 'none' })
+  })
 }
 function statusOf(recId) {
   return recStatus.value[recId] || null
 }
-function goPaywall() {
-  uni.navigateTo({ url: '/pages/paywall/index?from=actions' })
-}
+// Phase 10 商业化关闭：解锁 CTA 入口已移除（原 goPaywall 跳 /pages/paywall/index）
 </script>
 
 <template>
   <view class="screen">
-    <view class="navbar-wrap">
-      <NavBar title="行动清单" />
-      <text class="header-caption header-caption-pos">
-        {{ allRecs.length }} 条建议
-      </text>
-    </view>
+    <NavBar title="行动清单" :rightText="allRecs.length + ' 条建议'" />
 
-    <view class="screen-body screen-body-scroll">
+    <ScreenBody class="screen-body-scroll">
       <view v-if="!allRecs.length" class="empty-wrap">
-        <text class="empty-title">还没有建议</text>
-        <text class="empty-sub">先完成规划向导,这里会展示你的专属建议</text>
+        <template v-if="hasActivePlan">
+          <text class="empty-title">当前财务状况很健康</text>
+          <text class="empty-sub">暂无需要调整的风险建议，继续保持即可</text>
+        </template>
+        <template v-else>
+          <text class="empty-title">还没有建议</text>
+          <text class="empty-sub">先完成规划向导,这里会展示你的专属建议</text>
+        </template>
       </view>
 
       <view
@@ -94,25 +137,11 @@ function goPaywall() {
           <view class="tag-btn" :class="statusOf(r.id) === 'ignored' ? 'active' : ''" @tap="setStatus(r.id, 'ignored')">忽略</view>
         </view>
       </view>
-
-      <view v-if="hiddenCount > 0" class="unlock-cta" @tap="goPaywall">
-        <text>🔒 解锁全部 {{ allRecs.length }} 条建议</text>
-      </view>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 
 <style scoped>
-.navbar-wrap { position: relative; }
-.header-caption-pos {
-  position: absolute;
-  right: 32rpx;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 2;
-  color: var(--color-text-2);
-  font-size: 24rpx;
-}
 .empty-wrap {
   display: flex; flex-direction: column;
   align-items: center; gap: 16rpx;

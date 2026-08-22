@@ -8,19 +8,15 @@
  *
  * 用法:
  *   import { exportReportPdf } from '@/utils/pdf'
- *   await exportReportPdf(plan, { canExportPdf: true })
+ *   await exportReportPdf(plan)
  */
 
 import { buildShareModel, drawSharePoster } from './poster'
 
 /**
  * @param {object} plan - active plan (含 meta / monthly_summary / health_score)
- * @param {object} sub - subscription store 摘录, 至少 { canExportPdf: boolean }
  */
-export function exportReportPdf(plan, sub) {
-  if (!sub || !sub.canExportPdf) {
-    return Promise.reject(new Error('NEED_PRO'))
-  }
+export function exportReportPdf(plan) {
   if (!plan) {
     return Promise.reject(new Error('NO_PLAN'))
   }

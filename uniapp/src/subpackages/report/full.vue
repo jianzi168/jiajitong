@@ -1,28 +1,32 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, computed, onMounted } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
 import NavBar from '@/components/NavBar.vue'
 import ScoreRing from '@/components/ScoreRing.vue'
-import { ensureAndActivate } from '@/services/api'
-import { useSubscriptionStore } from '@/stores/subscription'
+import { usePlanStore } from '@/stores/plan'
+import { buildShareModel, drawSharePoster } from '@/utils/poster'
 
 const loading = ref(true)
 const errorMsg = ref('')
 const plan = ref(null)
 const recStatus = ref({}) // { recId: 'accepted' | 'later' | 'ignored' }
-const subStore = useSubscriptionStore()
+const activating = ref(false)
+const planStore = usePlanStore()
+
+const isActivated = computed(() =>
+  !!(planStore.activated || (plan.value && plan.value.activated_at))
+)
 
 async function loadPlan() {
-  // 优先从 plan store / 云端拉 (Phase 8: 避免裸读 globalData)
-  // 这里仍保留 globalData fallback 用于新生成但 plan store 尚未 hydrate 的场景
+  // 1) 同步: globalData（刚生成，优先级最高）
   const app = getApp()
-  // 同步: 优先 globalData (刚生成)
   const fromGlobal = app && app.globalData && app.globalData.fullPlanResult
   if (fromGlobal) {
     plan.value = fromGlobal
+    try { uni.setStorageSync('activePlanCache', fromGlobal) } catch (e) {}
     return true
   }
-  // 异步: 后续可以从云端 plans.getActive 拉 (本期暂用 localStorage 缓存)
+  // 2) 本地缓存
   try {
     const cached = uni.getStorageSync('activePlanCache')
     if (cached && cached._id) {
@@ -30,6 +34,17 @@ async function loadPlan() {
       return true
     }
   } catch (e) {}
+  // 3) 云端兜底：plans.getActive（与 dashboard 同源）
+  try {
+    const r = await planStore.loadActive()
+    if (r && r._id) {
+      plan.value = r
+      try { uni.setStorageSync('activePlanCache', r) } catch (e) {}
+      return true
+    }
+  } catch (e) {
+    console.warn('[full] loadActive failed:', e)
+  }
   return false
 }
 
@@ -47,15 +62,6 @@ onMounted(async () => {
   loading.value = false
 })
 
-// Phase 8: 每次进入页面强制刷新 entitlement, 防止退订后仍显示完整版
-onShow(async () => {
-  try {
-    await subStore.refresh({ force: true })
-  } catch (e) {
-    // fail-closed: 仍按 free 算
-  }
-})
-
 const riskLabel = computed(() => ({
   green: '稳健', yellow: '关注', red: '需调整',
 }[plan.value?.risk_level] || '—'))
@@ -68,10 +74,10 @@ const baby = computed(() => {
   const b = plan.value?.baby_reserve
   if (!b) return null
   return {
-    target: b.target,
-    current: b.current,
-    monthlyRequired: b.monthlyRequired,
-    monthsRemaining: b.monthsRemaining,
+    target: Number(b.target) || 0,
+    current: Number(b.current) || 0,
+    monthlyRequired: Number(b.monthlyRequired) || 0,
+    monthsRemaining: Number(b.monthsRemaining) || 0,
   }
 })
 
@@ -104,50 +110,121 @@ function fmtPct(num, denom) {
   return Math.min(100, Math.round((num / denom) * 100))
 }
 
-function stubTap(title) {
-  uni.showToast({ title, icon: 'none' })
+function goDashboard() {
+  uni.reLaunch({ url: '/pages/dashboard/index' })
 }
-function goPaywall() {
-  uni.navigateTo({ url: '/pages/paywall/index?from=full' })
-}
-function onActivate() {
-  // Phase 7: 启用预算追踪 → 看板（无云端 plan 时先补 save）
+
+async function onActivate() {
+  if (activating.value) return
+  if (isActivated.value) {
+    goDashboard()
+    return
+  }
+  activating.value = true
   uni.showLoading({ title: '启用中...' })
-  ensureAndActivate(plan.value)
+  try {
+    await planStore.activate(plan.value)
+    if (plan.value) {
+      plan.value = { ...plan.value, activated_at: Date.now() }
+      try { uni.setStorageSync('activePlanCache', plan.value) } catch (e) {}
+    }
+    uni.hideLoading()
+    uni.showToast({ title: '已启用追踪', icon: 'success' })
+    setTimeout(goDashboard, 600)
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: e.userHint || e.message || '启用失败', icon: 'none' })
+  } finally {
+    activating.value = false
+  }
+}
+function onInvite() {
+  uni.navigateTo({ url: '/pages/partner/index' })
+}
+function onExportPdf() {
+  // Phase 10 商业化关闭：PDF 导出全量开放（原 Pro 门槛已移除）
+  if (!plan.value) {
+    uni.showToast({ title: '规划数据为空', icon: 'none' })
+    return
+  }
+
+  uni.showLoading({ title: '生成中...' })
+
+  const model = buildShareModel(plan.value, { scoreOnly: false })
+  const canvasId = 'reportPdfCanvas'
+  const fileName = `jiajitong-report-${plan.value._id || Date.now()}.png`
+
+  drawSharePoster({ canvasId, model, qrImage: '', pageSize: 'a4' })
     .then(() => {
-      uni.hideLoading()
-      uni.showToast({ title: '已启用追踪', icon: 'success' })
-      setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 600)
+      uni.canvasToTempFilePath({
+        canvasId,
+        fileType: 'png',
+        quality: 1,
+        success: ({ tempFilePath }) => {
+          const fm = wx.getFileSystemManager()
+          const savePath = `${wx.env.USER_DATA_PATH}/${fileName}`
+          fm.writeFile({
+            filePath: savePath,
+            data: tempFilePath,
+            encoding: 'binary',
+            success: () => {
+              uni.openDocument({
+                filePath: savePath,
+                showMenu: true,
+                success: () => {
+                  uni.hideLoading()
+                  uni.showToast({ title: '已生成 PDF', icon: 'success' })
+                },
+                fail: (e) => {
+                  uni.hideLoading()
+                  fallbackSaveImage(tempFilePath)
+                },
+              })
+            },
+            fail: (e) => {
+              uni.hideLoading()
+              fallbackSaveImage(tempFilePath)
+            },
+          })
+        },
+        fail: (e) => {
+          uni.hideLoading()
+          uni.showToast({ title: '生成图片失败', icon: 'none' })
+        },
+      })
     })
     .catch((e) => {
       uni.hideLoading()
-      uni.showToast({ title: e.userHint || e.message || '启用失败', icon: 'none' })
+      uni.showToast({ title: e.message || 'PDF 生成失败', icon: 'none' })
     })
 }
-function onInvite() { stubTap('邀请伴侣 (Phase 10)') }
-function onExportPdf() {
-  // Phase 8: 走 utils/pdf.js
-  if (!subStore.canExportPdf) {
-    uni.showToast({ title: 'PDF 导出需 Pro 会员', icon: 'none' })
-    setTimeout(() => uni.navigateTo({ url: '/pages/paywall/index?from=pdf' }), 800)
-    return
-  }
-  import('@/utils/pdf').then(({ exportReportPdf }) => {
-    uni.showLoading({ title: '生成中...' })
-    exportReportPdf(plan.value, { canExportPdf: true })
-      .then(() => {
-        uni.hideLoading()
-      })
-      .catch((e) => {
-        uni.hideLoading()
-        if (e.message === 'NEED_PRO') {
-          uni.showToast({ title: 'PDF 导出需 Pro 会员', icon: 'none' })
-        } else {
-          uni.showToast({ title: e.message || 'PDF 生成失败', icon: 'none' })
-        }
-      })
-  }).catch(() => {
-    uni.showToast({ title: 'PDF 模块加载失败', icon: 'none' })
+
+function fallbackSaveImage(tempFilePath) {
+  uni.getSetting({
+    success: (res) => {
+      if (res.authSetting['scope.writePhotosAlbum'] === false) {
+        uni.showModal({
+          title: '需要相册权限',
+          content: '请在设置中开启相册权限以保存图片',
+          confirmText: '去设置',
+          success: (m) => { if (m.confirm) uni.openSetting() },
+        })
+        return
+      }
+      const doSave = () => {
+        uni.saveImageToPhotosAlbum({
+          filePath: tempFilePath,
+          success: () => uni.showToast({ title: '已保存为图片', icon: 'success' }),
+          fail: (e) => uni.showToast({ title: '保存失败', icon: 'none' }),
+        })
+      }
+      if (res.authSetting['scope.writePhotosAlbum'] === undefined) {
+        uni.authorize({ scope: 'scope.writePhotosAlbum', success: doSave, fail: () => {} })
+      } else {
+        doSave()
+      }
+    },
+    fail: () => uni.showToast({ title: '保存失败', icon: 'none' }),
   })
 }
 function onShare() {
@@ -159,7 +236,7 @@ function onShare() {
   <view class="screen">
     <NavBar title="家庭财务规划书（完整版）" />
 
-    <view class="screen-body screen-body-scroll report-body">
+    <ScreenBody class="screen-body-scroll report-body">
       <template v-if="loading">
         <text class="loading-text">加载中…</text>
       </template>
@@ -167,19 +244,7 @@ function onShare() {
         <text class="error-text">{{ errorMsg }}</text>
       </template>
 
-      <!-- Phase 8: 锁态屏 — 未付费禁止裸访问 (防绕过) -->
-      <template v-else-if="!subStore.canViewFull">
-        <view class="locked-screen">
-          <text class="lock-icon">🔒</text>
-          <text class="lock-title">完整版规划书需解锁</text>
-          <text class="lock-sub">解锁后可查看 7 类预算明细、全部建议、计算依据、备育完整进度,并支持 PDF 导出</text>
-          <view class="lock-plans">
-            <text class="lock-plan-item">¥19.9 · 单次完整报告 (7 天 Pro)</text>
-            <text class="lock-plan-item">¥68 · Pro 年付</text>
-          </view>
-          <button class="grad-btn" @tap="goPaywall">立即解锁</button>
-        </view>
-      </template>
+      <!-- Phase 10 商业化关闭：锁态屏已移除（完整报告全量开放） -->
 
       <template v-else>
         <!-- 1. 封面 -->
@@ -242,7 +307,7 @@ function onShare() {
             </view>
             <view class="kv-row kv-row-highlight">
               <text>距生育 {{ baby.monthsRemaining }} 月</text>
-              <text class="kv-val">每月 ¥{{ baby.monthlyRequired.toLocaleString('en-US') }}</text>
+              <text class="kv-val">每月 {{ fmt(baby.monthlyRequired) }}</text>
             </view>
           </view>
         </view>
@@ -310,8 +375,8 @@ function onShare() {
         <!-- 7. 下一步 -->
         <view class="report-section">
           <text class="section-title">下一步行动</text>
-          <button class="grad-btn" @tap="onActivate">
-            启用预算追踪
+          <button class="grad-btn" :disabled="activating" @tap="onActivate">
+            {{ isActivated ? '查看预算看板' : (activating ? '启用中…' : '启用预算追踪') }}
           </button>
           <button class="text-link" @tap="onInvite">
             邀请伴侣共读
@@ -324,12 +389,15 @@ function onShare() {
           </button>
         </view>
       </template>
-    </view>
+    </ScreenBody>
+
+    <!-- PDF 导出用隐藏 canvas -->
+    <canvas canvas-id="reportPdfCanvas" class="pdf-canvas" :style="{ width: '375px', height: '530px' }"></canvas>
   </view>
 </template>
 
 <style>
-.report-body { padding-top: 24rpx; padding-bottom: 64rpx; }
+.report-body .screen-body-inner { padding-top: 24rpx; padding-bottom: 64rpx; }
 .report-cover {
   padding: 40rpx 24rpx;
   text-align: center;
@@ -424,4 +492,5 @@ function onShare() {
 .lock-sub { display: block; font-size: 26rpx; color: var(--color-text-2); line-height: 1.6; margin-bottom: 32rpx; }
 .lock-plans { margin-bottom: 32rpx; }
 .lock-plan-item { display: block; font-size: 28rpx; color: #FF6B8A; font-weight: 600; margin: 8rpx 0; }
+.pdf-canvas { position: fixed; left: -9999px; top: -9999px; }
 </style>

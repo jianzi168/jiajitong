@@ -1,33 +1,26 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, computed, onMounted } from 'vue'
 import ScoreRing from '@/components/ScoreRing.vue'
 import NavBar from '@/components/NavBar.vue'
-import engineClient from '@/utils/engineClient'
-import { ensureAndActivate } from '@/services/api'
-import { useSubscriptionStore } from '@/stores/subscription'
+import { getActivePlan } from '@/services/api'
+import { usePlanStore } from '@/stores/plan'
 
 const loading = ref(true)
 const errorMsg = ref('')
 const plan = ref(null)
+const activating = ref(false)
 
-const subStore = useSubscriptionStore()
-
-// Free 权益（PDD §5.3）：仅显示 2 类预算 + 1 条建议 + 摘要备育
-const FREE_VISIBLE_CATEGORIES = 2
-const FREE_VISIBLE_RECOMMENDATIONS = 1
+const planStore = usePlanStore()
 
 onMounted(async () => {
-  // Phase 8: 同时拉 plan + subscription, 避免付费内容短暂闪现
-  try {
-    await subStore.refresh()
-  } catch (e) {
-    console.warn('[preview] subscription refresh failed:', e)
-  }
   // 优先从云端 plan.getActive 拉 (Phase 6)
   try {
-    const r = await engineClient.callPlanGetActive()
+    const r = await getActivePlan()
     if (r && r.plan) {
       plan.value = r.plan
+      planStore.activePlan = r.plan
+      planStore.activated = !!r.plan.activated_at
       loading.value = false
       return
     }
@@ -39,9 +32,15 @@ onMounted(async () => {
   plan.value = (app && app.globalData && app.globalData.fullPlanResult) || null
   if (!plan.value) {
     errorMsg.value = '未找到规划数据，请回到向导重新生成'
+  } else if (planStore.activated || plan.value.activated_at) {
+    planStore.activated = true
   }
   loading.value = false
 })
+
+const isActivated = computed(() =>
+  !!(planStore.activated || (plan.value && plan.value.activated_at))
+)
 
 const riskLabel = computed(() => ({
   green: '稳健',
@@ -51,48 +50,32 @@ const riskLabel = computed(() => ({
 
 const disposable = computed(() => plan.value?.monthly_summary?.disposable || 0)
 
-// Phase 8: 付费用户看全部, 免费用户看前 2 类
+// Phase 10 商业化关闭：全量展示，不再按订阅截断
 const visibleCategories = computed(() => {
   const all = plan.value?.categories || []
-  if (subStore.canViewFull) {
-    return { shown: all, hidden: [] }
-  }
-  return {
-    shown: all.slice(0, FREE_VISIBLE_CATEGORIES),
-    hidden: all.slice(FREE_VISIBLE_CATEGORIES),
-  }
+  return { shown: all, hidden: [] }
 })
 
 const recommendations = computed(() => {
-  const all = plan.value?.recommendations || []
-  if (subStore.canViewFull) return all
-  return all
+  return plan.value?.recommendations || []
 })
 
-// 推荐显示数: free 看 1 条 + 解锁 CTA; paid 看全部
-const visibleRecommendations = computed(() => {
-  const all = recommendations.value
-  if (subStore.canViewFull) return all
-  return all.slice(0, FREE_VISIBLE_RECOMMENDATIONS)
-})
+const visibleRecommendations = computed(() => recommendations.value)
 
 const babySection = computed(() => {
   if (!plan.value?.baby_reserve) return null
   const b = plan.value.baby_reserve
-  // Phase 8: 付费用户看完整, 免费用户只摘要
-  if (subStore.canViewFull) {
-    return {
-      target: b.target,
-      current: b.current,
-      monthlyRequired: b.monthlyRequired,
-      monthsRemaining: b.monthsRemaining,
-      pressureRatio: b.pressureRatio,
-    }
-  }
+  const target = Number(b.target) || 0
+  const current = Number(b.current) || 0
+  const monthlyRequired = Number(b.monthlyRequired) || 0
+  const monthsRemaining = Number(b.monthsRemaining) || 0
   return {
-    target: b.target,
-    current: b.current,
-    summary: `推荐储备 ¥${b.target.toLocaleString('en-US')}，当前已存 ¥${b.current.toLocaleString('en-US')}`,
+    full: true,
+    target,
+    current,
+    monthlyRequired,
+    monthsRemaining,
+    pressureRatio: b.pressureRatio,
   }
 })
 
@@ -105,24 +88,35 @@ function pct(n) {
   return (n * 100).toFixed(1) + '%'
 }
 
-// Phase 8: 解锁 CTA 跳 paywall, 不再裸跳 full
-function onUnlock() {
-  uni.navigateTo({ url: '/pages/paywall/index?from=preview' })
+// Phase 10 商业化关闭：支付入口已屏蔽（原 onUnlock 跳 /pages/paywall/index）
+function onFullReport() {
+  uni.navigateTo({ url: '/subpackages/report/full' })
 }
 
-function onActivate() {
-  // Phase 7: 启用预算追踪 → 看板（无云端 plan 时先补 save）
+function goDashboard() {
+  uni.reLaunch({ url: '/pages/dashboard/index' })
+}
+
+async function onActivate() {
+  if (activating.value) return
+  if (isActivated.value) {
+    goDashboard()
+    return
+  }
+  activating.value = true
   uni.showLoading({ title: '启用中...' })
-  ensureAndActivate(plan.value)
-    .then(() => {
-      uni.hideLoading()
-      uni.showToast({ title: '已启用追踪', icon: 'success' })
-      setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 600)
-    })
-    .catch((e) => {
-      uni.hideLoading()
-      uni.showToast({ title: e.userHint || e.message || '启用失败', icon: 'none' })
-    })
+  try {
+    await planStore.activate(plan.value)
+    if (plan.value) plan.value = { ...plan.value, activated_at: Date.now() }
+    uni.hideLoading()
+    uni.showToast({ title: '已启用追踪', icon: 'success' })
+    setTimeout(goDashboard, 600)
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: e.userHint || e.message || '启用失败', icon: 'none' })
+  } finally {
+    activating.value = false
+  }
 }
 </script>
 
@@ -130,7 +124,7 @@ function onActivate() {
   <view class="screen">
     <NavBar title="家庭财务规划书" />
 
-    <view class="screen-body screen-body-scroll report-body">
+    <ScreenBody class="screen-body-scroll report-body">
       <template v-if="loading">
         <text class="loading-text">加载中…</text>
       </template>
@@ -182,16 +176,6 @@ function onActivate() {
               <text class="budget-val">{{ fmt(c.suggested) }}</text>
               <text class="budget-pct">{{ pct(c.ratio) }}</text>
             </view>
-            <view v-if="visibleCategories.hidden.length" class="budget-locked">
-              <view v-for="c in visibleCategories.hidden" :key="c.id" class="budget-row blurred">
-                <text class="budget-name">{{ c.name }}</text>
-                <text class="budget-val">{{ fmt(c.suggested) }}</text>
-                <text class="budget-pct">{{ pct(c.ratio) }}</text>
-              </view>
-              <view class="unlock-cta" @tap="onUnlock">
-                <text>🔒 解锁完整 7 类预算</text>
-              </view>
-            </view>
           </view>
         </view>
 
@@ -201,9 +185,9 @@ function onActivate() {
           <view class="kv-list">
             <view class="kv-row"><text>推荐储备金</text><text class="kv-val">{{ fmt(babySection.target) }}</text></view>
             <view class="kv-row"><text>当前已存</text><text class="kv-val">{{ fmt(babySection.current) }}</text></view>
-            <view class="kv-row kv-row-highlight">
+            <view v-if="babySection.full" class="kv-row kv-row-highlight">
               <text>距生育 {{ babySection.monthsRemaining }} 月</text>
-              <text class="kv-val">每月需 ¥{{ babySection.monthlyRequired.toLocaleString('en-US') }}</text>
+              <text class="kv-val">每月需 {{ fmt(babySection.monthlyRequired) }}</text>
             </view>
           </view>
         </view>
@@ -215,9 +199,6 @@ function onActivate() {
             <view v-for="(r, i) in visibleRecommendations" :key="i" class="rec-card">
               <text class="rec-title">{{ r.title || '建议 ' + (i+1) }}</text>
               <text class="rec-desc">{{ r.description || r.text || '' }}</text>
-            </view>
-            <view v-if="!subStore.canViewFull && recommendations.length > FREE_VISIBLE_RECOMMENDATIONS" class="unlock-cta" @tap="onUnlock">
-              <text>🔒 解锁全部 {{ recommendations.length }} 条建议</text>
             </view>
           </view>
         </view>
@@ -244,16 +225,18 @@ function onActivate() {
         <!-- 7. 下一步行动 -->
         <view class="report-section">
           <text class="section-title">下一步</text>
-          <button class="grad-btn" @tap="onActivate">启用预算追踪</button>
-          <button class="text-link" @tap="onUnlock">解锁完整版规划书</button>
+          <button class="grad-btn" :disabled="activating" @tap="onActivate">
+            {{ isActivated ? '查看预算看板' : (activating ? '启用中…' : '启用预算追踪') }}
+          </button>
+          <button class="text-link" @tap="onFullReport">查看完整规划书</button>
         </view>
       </template>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 
 <style>
-.report-body { padding-top: 24rpx; padding-bottom: 48rpx; }
+.report-body .screen-body-inner { padding-top: 24rpx; padding-bottom: 48rpx; }
 .report-cover {
   padding: 32rpx 24rpx;
   text-align: center;
