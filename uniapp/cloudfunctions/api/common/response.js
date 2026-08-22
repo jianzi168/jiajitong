@@ -25,6 +25,16 @@ const ERROR_CODE = {
   ORDER_STATUS_INVALID:  40901, // Phase 8: 订单已 paid/failed
   ALREADY_ENTITLED:     40921, // Phase 8: 已有同级或更高有效权益
   RATE_LIMITED:       42901,
+  // Phase 10: 伴侣邀请
+  INVITE_EXPIRED:      41001,
+  INVITE_ALREADY_USED: 41002,
+  INVITE_NOT_FOUND:    41003,
+  ALREADY_MEMBER:      41004,
+  CANNOT_JOIN_OWN:     41005,
+  FAMILY_ALREADY_PAIRED: 41008, // 家庭已有伴侣，不能再生成邀请码
+  // Phase 10: 订阅消息
+  SUBSCRIBE_NOT_CONFIGURED: 41006, // 模板 ID 未配置（小程序后台申请后填入）
+  SUBSCRIBE_QUOTA_EXHAUSTED: 41007, // 订阅配额耗尽（一次授权一次推送）
 
   // 系统错误 (5xxxx)
   INTERNAL_ERROR:     50001,
