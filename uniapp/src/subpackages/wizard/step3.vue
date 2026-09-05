@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { computed } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import { useWizardStore } from '@/stores/wizard'
@@ -59,7 +60,7 @@ function onNext() {
       <view class="seg"></view>
     </view>
 
-    <view class="screen-body">
+    <ScreenBody>
       <text class="screen-title">固定开销（每月）</text>
       <text class="hint-text">房贷/房租必填，其他可填 0</text>
 
@@ -86,7 +87,7 @@ function onNext() {
       </view>
 
       <button class="grad-btn" @tap="onNext">下一步</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 

@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, computed } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import { useWizardStore } from '@/stores/wizard'
@@ -51,7 +52,7 @@ function onNext() {
       <view class="seg"></view>
     </view>
 
-    <view class="screen-body">
+    <ScreenBody>
       <text class="screen-title">你们现在处于哪个阶段？</text>
 
       <view
@@ -82,7 +83,7 @@ function onNext() {
       </view>
 
       <button class="grad-btn" :disabled="!selected" @tap="onNext">下一步</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 

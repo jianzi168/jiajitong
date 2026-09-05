@@ -12,18 +12,27 @@ const { ERROR_CODE } = require('../uniapp/cloudfunctions/api/common/response')
 
 // ---------- cities.list ----------
 describe('cities.list', () => {
-  test('返回 10 城 + tier + medianIncome', async () => {
+  test('返回 30 城 + tier + medianIncome', async () => {
     const r = await dispatch({ action: 'cities.list' })
     assert.equal(r.code, 0)
-    assert.equal(r.data.cities.length, 10)
+    assert.equal(r.data.cities.length, 30)
     assert.ok(r.data.cities[0].tier)
     assert.ok(r.data.cities[0].medianIncome)
   })
 
-  test('tier1 城市数量 = 4', async () => {
+  test('tier 分布: tier1=4, tier2=15, tier3=11', async () => {
     const r = await dispatch({ action: 'cities.list' })
-    const tier1 = r.data.cities.filter(c => c.tier === 'tier1')
-    assert.equal(tier1.length, 4)
+    assert.equal(r.data.cities.filter(c => c.tier === 'tier1').length, 4)
+    assert.equal(r.data.cities.filter(c => c.tier === 'tier2').length, 15)
+    assert.equal(r.data.cities.filter(c => c.tier === 'tier3').length, 11)
+  })
+
+  test('返回的城市列表覆盖厦门/沈阳/哈尔滨 (tier3)', async () => {
+    const r = await dispatch({ action: 'cities.list' })
+    const names = r.data.cities.map(c => c.name)
+    assert.ok(names.includes('厦门'))
+    assert.ok(names.includes('沈阳'))
+    assert.ok(names.includes('哈尔滨'))
   })
 })
 
@@ -37,9 +46,15 @@ describe('calc.quick', () => {
   })
 
   test('城市未覆盖 → city_estimated: true（不抛错）', async () => {
-    const r = await dispatch({ action: 'calc.quick', payload: { city: '厦门', income: 25000, housing: 8000 } })
+    const r = await dispatch({ action: 'calc.quick', payload: { city: '鄂尔多斯', income: 25000, housing: 8000 } })
     assert.equal(r.code, 0)
     assert.equal(r.data.city_estimated, true)
+    assert.equal(r.data.original_city, '鄂尔多斯')
+  })
+
+  test('已覆盖 tier3 城市（厦门）→ city_estimated: false', async () => {
+    const r = await dispatch({ action: 'calc.quick', payload: { city: '厦门', income: 15000, housing: 6000 } })
+    assert.equal(r.data.city_estimated, false)
   })
 
   test('固定 91% → fail IMBALANCE', async () => {

@@ -47,7 +47,7 @@ export const useWizardStore = defineStore('wizard', {
       const m = state.emergencyFund / this.fixedTotal
       return Math.round(m * 10) / 10
     },
-    /** 喂给 engineClient.callCalcFull 的载荷 */
+    /** 喂给 api.calcFull 的载荷 */
     payload(state) {
       const p = {
         stage: state.stage || 'newlywed',
@@ -75,7 +75,7 @@ export const useWizardStore = defineStore('wizard', {
     },
   },
   actions: {
-    /** quick 结果页预填（来自 engineClient.callCalcQuick 的入参） */
+    /** quick 结果页预填（来自 api.calcQuick 的入参） */
     loadFromQuick({ city, income, housing }) {
       if (city) this.city = city
       if (income) this.monthlyIncome = Number(income) || 0

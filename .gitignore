@@ -24,6 +24,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Brainstorming visual companion
+.superpowers/
+
 # 临时与本地配置
 .env
 .env.local

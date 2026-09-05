@@ -8,6 +8,8 @@
  *   target = monthlyIncrement × 12 + oneTimeChildbirth
  *   monthlyRequired = max(0, round((target - current) / monthsRemaining))
  *   pressureRatio = monthlyRequired / (monthlyDisposable × 0.30)   用于 R-N01 触发判断
+ *
+ * 升级：tier 支持 tier1/tier2/tier3，未知 tier 兜底 tier3（最保守基线）。
  */
 
 const benchmark = require('../benchmark-data')
@@ -22,7 +24,11 @@ function calcBabyReserve({ stage, cityTier, monthsRemaining, currentReserve, mon
     return { target: 0, current: currentReserve || 0, monthlyRequired: 0, monthsRemaining: 0 }
   }
 
-  const babyBm = benchmark.getBabyBenchmarkByTier(cityTier) || benchmark.babyBenchmarks.tier2
+  // tier3 → tier2 → tier1 三档兜底，向下兼容
+  const babyBm =
+    benchmark.getBabyBenchmarkByTier(cityTier) ||
+    benchmark.babyBenchmarks.tier3 ||
+    benchmark.babyBenchmarks.tier2
   const monthlyIncrement = babyBm.milkDiapers + babyBm.childcare + babyBm.medical + babyBm.supplies
   const oneTimeChildbirth = babyBm.oneTimeChildbirth
 

@@ -26,7 +26,7 @@ function evaluateRules(plan, input) {
     }
   })
 
-  return triggered
+  const results = triggered
     .map(r => {
       let detail
       try {
@@ -54,6 +54,37 @@ function evaluateRules(plan, input) {
     .filter(Boolean)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5)
+
+  // 兜底：健康/良好用户没有任何规则命中时，给出正向维持建议，避免行动清单空态
+  if (!results.length && plan.health_score >= 60) {
+    const score = plan.health_score || 0
+    const healthy = score >= 80
+    return [{
+      id: 'R-POSITIVE',
+      title: healthy ? '财务状况优秀，继续保持' : '财务状况良好，仍可微调',
+      severity: 'green',
+      category: 'R-POSITIVE',
+      description: healthy
+        ? `当前健康分 ${score} 分，整体财务状况优秀，暂无需要调整的风险项。`
+        : `当前健康分 ${score} 分，整体情况良好，可继续优化储蓄结构。`,
+      actions: healthy ? [
+        '保持当前储蓄节奏，建议设置工资到账自动转账',
+        '将多余资金配置到稳健理财或长期投资',
+        '每季度回顾一次预算分配',
+      ] : [
+        '尝试把储蓄率提升到收入的 20% 以上',
+        '优先补齐 3-6 个月应急金',
+        '减少非必要支出，把释放资金用于长期目标',
+      ],
+      impact: 0,
+      feasibility: 0.9,
+      stage_weight: 1,
+      estimatedImpact: healthy ? '维持当前健康状态' : '进一步提升财务健康度',
+      score: 1,
+    }]
+  }
+
+  return results
 }
 
 module.exports = {

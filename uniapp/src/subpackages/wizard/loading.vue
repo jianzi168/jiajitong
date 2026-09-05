@@ -1,7 +1,8 @@
 <script setup>
 import { ref } from 'vue'
-import engineClient from '@/utils/engineClient.js'
 import { useWizardStore } from '@/stores/wizard'
+import { applyProfile } from '@/services/session'
+import { calcFull, savePlan, bootstrap } from '@/services/api'
 
 const wizard = useWizardStore()
 
@@ -21,15 +22,14 @@ async function start() {
 
   try {
     // 1. 调 calc.full 算方案
-    const planOutput = await engineClient.callCalcFull(wizard.payload)
+    const planOutput = await calcFull(wizard.payload)
 
     // 2. Phase 6: 自动 bootstrap + save (云函数自动用 ctx.openid)
     let activePlan = null
     try {
-      const profile = await engineClient.callWxLogin({})
-      uni.setStorageSync('openid', profile.user?._openid || '')
-      uni.setStorageSync('family_id', profile.family_id || '')
-      const saved = await engineClient.callPlanSave({
+      const profile = await bootstrap({})
+      applyProfile(profile)
+      const saved = await savePlan({
         planInput: wizard.payload,
         planOutput,
       })

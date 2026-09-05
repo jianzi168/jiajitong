@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { computed } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import { useWizardStore } from '@/stores/wizard'
@@ -49,7 +50,7 @@ function onGenerate() {
       <view class="seg done"></view>
     </view>
 
-    <view class="screen-body screen-body-scroll">
+    <ScreenBody class="screen-body-scroll">
       <view class="glass-card kv-list">
         <view class="kv-row"><text>家庭阶段</text><text class="kv-val">{{ stageLabel }}</text></view>
         <view class="kv-row"><text>所在城市</text><text class="kv-val">{{ wizard.city || '—' }}</text></view>
@@ -78,7 +79,7 @@ function onGenerate() {
       <button class="grad-btn" :disabled="!wizard.canSubmit" @tap="onGenerate">
         生成我们的家庭规划书
       </button>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 

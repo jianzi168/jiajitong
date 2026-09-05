@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { computed } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import { useWizardStore } from '@/stores/wizard'
@@ -32,7 +33,7 @@ function onContinue() {
       <view class="seg"></view>
     </view>
 
-    <view class="screen-body screen-body-scroll">
+    <ScreenBody class="screen-body-scroll">
       <view class="warn-card">
         <text class="warn-icon">⚠️</text>
         <text class="warn-title">固定支出占比较高</text>
@@ -44,11 +45,11 @@ function onContinue() {
         <text class="ratio-tip">占比较高（≥50%），但未达失衡线（90%）</text>
       </view>
 
-      <view class="btn-row">
-        <button class="text-link" @tap="onBack">返回修改</button>
+      <view class="action-row">
+        <button class="grad-btn grad-btn-outline" @tap="onBack">返回修改</button>
         <button class="grad-btn" @tap="onContinue">仍要继续</button>
       </view>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 
@@ -66,6 +67,5 @@ function onContinue() {
 .ratio-bar { margin-top: 24rpx; padding: 16rpx 24rpx; border-radius: 12rpx; background: rgba(255, 180, 0, 0.18); }
 .ratio-text { display: block; font-size: 28rpx; font-weight: 600; }
 .ratio-tip { display: block; font-size: 24rpx; color: var(--color-text-2); margin-top: 4rpx; }
-.btn-row { margin-top: 40rpx; display: flex; gap: 16rpx; align-items: center; }
-.btn-row .grad-btn { flex: 1; }
+.action-row { margin-top: 40rpx; }
 </style>

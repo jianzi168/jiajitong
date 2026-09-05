@@ -61,6 +61,11 @@ async function dispatch(event, ctx = {}) {
  * 最后从传入的 ctx.openid 兜底(本地测试)。
  */
 async function main(event, context) {
+  // 定时触发器事件（config.json triggers）：每周日 20:00 批量推送周记账提醒
+  if (event && event.Type === 'Timer') {
+    return dispatch({ action: 'subscribe.remindWeekly', payload: {} }, {})
+  }
+
   let openid = null, unionid = null, appid = null
   if (cloud && typeof cloud.getWXContext === 'function') {
     try {

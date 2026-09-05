@@ -1,27 +1,43 @@
 <script setup>
-import { ref, computed } from 'vue'
+import ScreenBody from '@/components/ScreenBody.vue'
+import { ref, computed, onMounted } from 'vue'
 import NavBar from '@/components/NavBar.vue'
+import { listCities } from '@/services/api'
 import { UNAVAILABLE_COPY } from '@/utils/featureAvailability.js'
 
 const familyName = ref('晓雯的家庭')
-const city = ref('上海')
+// 城市从 wizard store 读取（与 quick/wizard 共享单一来源），store 为空则用 '北京' 作为兜底
+import { useWizardStore } from '@/stores/wizard'
+const wizard = useWizardStore()
+const city = ref(wizard.city || '北京')
 
-// 城市列表（与 quick/step1 一致；按城市等级分组便于查找）
-const cityGroups = [
-  {
-    label: '一线城市',
-    items: ['北京', '上海', '广州', '深圳']
-  },
-  {
-    label: '新一线',
-    items: ['成都', '杭州', '重庆', '苏州', '武汉', '西安', '南京', '长沙', '天津', '郑州', '青岛', '东莞', '宁波', '佛山', '合肥']
-  },
-  {
-    label: '其他城市',
-    items: ['临沂', '其他城市']
+// 城市列表（来自 listCities；按 tier 分组便于查找）
+const cityGroups = ref([])
+const loading = ref(true)
+const citiesError = ref('')
+
+onMounted(async () => {
+  try {
+    const r = await listCities()
+    const order = [
+      { tier: 'tier1', label: '一线城市' },
+      { tier: 'tier2', label: '新一线' },
+      { tier: 'tier3', label: '其他城市' },
+    ]
+    cityGroups.value = order
+      .map(g => ({
+        label: g.label,
+        items: r.cities
+          .filter(c => c.tier === g.tier)
+          .map(c => c.name),
+      }))
+      .filter(g => g.items.length > 0)
+  } catch (e) {
+    citiesError.value = e.message || '城市列表加载失败'
+  } finally {
+    loading.value = false
   }
-]
-const allCities = cityGroups.flatMap(g => g.items)
+})
 
 const stages = [
   { key: 'newlywed', label: '新婚磨合期', desc: '暂时还没打算要娃' },
@@ -45,14 +61,34 @@ function onStageChange(k) {
   markDirty()
 }
 
-// 点击"所在城市"行：弹出 ActionSheet
+// 点击"所在城市"行：弹出 ActionSheet（按 tier 分组前缀标签）
 function onPickCity() {
+  if (loading.value) {
+    uni.showToast({ title: '城市加载中…', icon: 'none' })
+    return
+  }
+  if (citiesError.value) {
+    uni.showToast({ title: citiesError.value, icon: 'none' })
+    return
+  }
+  // ActionSheet 拼成 "分组名 / 城市名"，选中后只取城市名
+  const itemList = []
+  const flat = []
+  cityGroups.value.forEach(g => {
+    itemList.push(`── ${g.label} ──`)
+    flat.push(null) // 占位：点击分组标题无效
+    g.items.forEach(name => {
+      itemList.push(name)
+      flat.push(name)
+    })
+  })
   uni.showActionSheet({
-    itemList: allCities,
+    itemList,
     success: (res) => {
-      const picked = allCities[res.tapIndex]
+      const picked = flat[res.tapIndex]
       if (picked && picked !== city.value) {
         city.value = picked
+        wizard.setCity(picked)   // 同步回 wizard.store，保持单一真相
         markDirty()
       }
     },
@@ -76,7 +112,7 @@ function onSave() {
   <view class="screen">
     <NavBar title="家庭档案" />
 
-    <view class="screen-body screen-body-scroll family-body">
+    <ScreenBody class="screen-body-scroll family-body">
       <!-- 档案卡（顶部视觉锚点） -->
       <view class="profile-card">
         <view class="avatar">
@@ -133,7 +169,7 @@ function onSave() {
         </view>
         <text class="form-hint" v-if="isDirty">已修改，阶段变更后建议重新测算</text>
       </view>
-    </view>
+    </ScreenBody>
 
     <!-- 底部保存栏（始终可见，未修改时灰色态） -->
     <view class="form-bottom-bar">
@@ -302,7 +338,7 @@ function onSave() {
 }
 
 /* === 底部保存栏 === */
-.family-body { padding-bottom: 220rpx; }
+.family-body .screen-body-inner { padding-bottom: 220rpx; }
 .form-bottom-bar {
   position: fixed;
   left: 0; right: 0; bottom: 0;

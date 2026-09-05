@@ -1,7 +1,8 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, onMounted, computed } from 'vue'
 import NavBar from '@/components/NavBar.vue'
-import engineClient from '@/utils/engineClient.js'
+import { listCities } from '@/services/api'
 import { useWizardStore } from '@/stores/wizard'
 
 const wizard = useWizardStore()
@@ -9,6 +10,16 @@ const wizard = useWizardStore()
 const cities = ref([])
 const loading = ref(true)
 const showPicker = ref(false)
+
+// 城市是否从 quick 流程带入：检查页面栈是否经过 /pages/quick/*
+const cityFromQuick = (() => {
+  try {
+    const stack = typeof getCurrentPages === 'function' ? getCurrentPages() : []
+    return stack.some(p => (p.route || '').startsWith('pages/quick/'))
+  } catch (e) {
+    return false
+  }
+})()
 const stabilities = [
   { id: 'stable', label: '稳定' },
   { id: 'bonus', label: '含奖金' },
@@ -17,7 +28,7 @@ const stabilities = [
 
 onMounted(async () => {
   try {
-    const r = await engineClient.callCitiesList()
+    const r = await listCities()
     cities.value = r.cities
     if (!wizard.city && r.cities[0]) wizard.setCity(r.cities[0].name)
   } finally {
@@ -70,8 +81,11 @@ function onNext() {
       <view class="seg"></view>
     </view>
 
-    <view class="screen-body">
-      <text class="field-heading">所在城市</text>
+    <ScreenBody>
+      <view class="city-heading-row">
+        <text class="field-heading">所在城市</text>
+        <text v-if="cityFromQuick" class="city-from-quick">✓ 已从快速测算带入</text>
+      </view>
       <view v-if="loading" class="field-block"><text>加载中…</text></view>
       <view v-else class="field-block select-field" @tap="showPicker = !showPicker">
         <text>{{ wizard.city || '请选择' }}</text>
@@ -87,7 +101,7 @@ function onNext() {
           @tap="pickCity(c.name)"
         >
           <text>{{ c.name }}</text>
-          <text class="city-tier">{{ c.tier === 'tier1' ? '一线' : '新一线' }}</text>
+          <text class="city-tier">{{ c.tier === 'tier1' ? '一线' : (c.tier === 'tier2' ? '新一线' : '其他城市') }}</text>
         </view>
       </view>
 
@@ -128,7 +142,7 @@ function onNext() {
       </view>
 
       <button class="grad-btn" @tap="onNext">下一步</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 
@@ -147,4 +161,17 @@ function onNext() {
 }
 .city-item.active { background: rgba(255,107,138,0.08); }
 .city-tier { font-size: 24rpx; color: var(--color-text-2); }
+.city-heading-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 8rpx;
+}
+.city-from-quick {
+  font-size: 22rpx;
+  color: #FF6B8A;
+  background: rgba(255, 107, 138, 0.10);
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+}
 </style>
