@@ -1,22 +1,37 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
+import ProgressBar from '@/components/ProgressBar.vue'
 import { computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import FloatNav from '@/components/FloatNav.vue'
 import { usePlanStore } from '@/stores/plan'
+import { getCapsuleSafeArea } from '@/utils/capsule'
 
 const store = usePlanStore()
-const statusBarHeight = uni.getSystemInfoSync().statusBarHeight || 20
+
+const { statusBarHeight, navBarHeight, capsuleReserveRight } = getCapsuleSafeArea()
+const actionRowHeight = typeof uni.upx2px === 'function' ? uni.upx2px(64) : 32
+const headerPlaceholder = statusBarHeight + navBarHeight + actionRowHeight
 
 const hasPlan = computed(() => store.hasPlan)
 const health = computed(() => store.healthScore)
-const monthly = computed(() => store.monthlySummary || {})
 const baby = computed(() => store.babyReserve)
 const recs = computed(() => store.recommendations.slice(0, 2))
 const nickname = computed(() => uni.getStorageSync('nickname') || '我的家庭')
 
+// 本月储蓄：需启用追踪、有周填报数据后才有实际值。
+// 未启用时后端返回 actual: null，此处必须区分「存了 0 元」与「无数据」，
+// 否则会把全部可支配收入谎报成已储蓄。
+const savings = computed(() => store.savings)
+const savingsTarget = computed(() => (savings.value ? savings.value.target : 0))
+const hasSavingsData = computed(
+  () => !!savings.value && savings.value.actual !== null
+)
+
 onShow(async () => {
   try {
-    await store.loadActive()
+    // 用 loadDashboard 而非 loadActive：首页储蓄进度依赖本月已填报支出合计
+    await store.loadDashboard()
     if (!store.hasPlan) {
       uni.reLaunch({ url: '/pages/home/empty' })
     }
@@ -38,12 +53,24 @@ function onGoActions() {
 
 <template>
   <view class="screen">
-    <view class="simple-header" :style="{ paddingTop: statusBarHeight + 'px' }">
-      <text class="page-title">{{ nickname }}的家庭</text>
-      <text class="text-link" @tap="onRecalc">重新测算</text>
+    <view class="home-header">
+      <view class="home-header-status" :style="{ height: statusBarHeight + 'px' }"></view>
+      <view
+        class="home-header-nav"
+        :style="{
+          height: navBarHeight + 'px',
+          paddingRight: capsuleReserveRight + 'px',
+        }"
+      >
+        <text class="page-title home-title">{{ nickname }}的家庭</text>
+      </view>
+      <view class="home-header-action">
+        <text class="recalc-link" @tap="onRecalc">重新测算</text>
+      </view>
     </view>
+    <view class="simple-header-placeholder" :style="{ height: headerPlaceholder + 'px' }"></view>
 
-    <view class="screen-body screen-body-scroll screen-body-tab">
+    <ScreenBody tab class="screen-body-scroll">
       <view class="bento-grid">
         <view class="bento-cell bento-cell-wide glass-card" @tap="onGoReport">
           <view class="score-inline">
@@ -56,18 +83,17 @@ function onGoActions() {
 
         <view class="bento-cell glass-card">
           <text class="glass-label">本月储蓄</text>
-          <text class="glass-value-sm">
-            ¥{{ monthly.savings_actual || 0 }} / ¥{{ monthly.savings_target || 0 }}
-          </text>
-          <view class="track-bar">
-            <view
-              class="track-fill track-fill-warn"
-              :style="{ width: monthly.savings_target ? Math.min(100, Math.round((monthly.savings_actual / monthly.savings_target) * 100)) + '%' : '0%' }"
-            ></view>
-          </view>
-          <text class="cell-meta">
-            {{ monthly.savings_target ? Math.round((monthly.savings_actual / monthly.savings_target) * 100) : 0 }}%
-          </text>
+          <template v-if="hasSavingsData">
+            <text class="glass-value-sm">
+              ¥{{ savings.actual }} / ¥{{ savings.target }}
+            </text>
+            <ProgressBar :pct="savings.pct || 0" :color="savings.color || 'green'" />
+            <text class="cell-meta">{{ savings.pct || 0 }}%</text>
+          </template>
+          <template v-else>
+            <text class="glass-value-sm">— / ¥{{ savingsTarget }}</text>
+            <text class="cell-meta">启用预算追踪后可见</text>
+          </template>
         </view>
 
         <view v-if="baby" class="bento-cell glass-card">
@@ -75,13 +101,8 @@ function onGoActions() {
           <text class="glass-value-sm">
             ¥{{ baby.current || 0 }} / ¥{{ baby.target || 0 }}
           </text>
-          <view class="track-bar">
-            <view
-              class="track-fill"
-              :style="{ width: baby.target ? Math.min(100, Math.round((baby.current / baby.target) * 100)) + '%' : '0%' }"
-            ></view>
-          </view>
-          <text class="cell-meta">{{ baby.target ? Math.round((baby.current / baby.target) * 100) : 0 }}%</text>
+          <ProgressBar :pct="baby.pct || 0" :color="baby.color || 'green'" />
+          <text class="cell-meta">{{ baby.pct || 0 }}%</text>
         </view>
       </view>
 
@@ -100,20 +121,50 @@ function onGoActions() {
         @tap="onGoActions"
       >
         <text class="tip-strong">{{ r.title || '建议' }}</text>
-        <text class="tip-p">{{ r.desc || '' }}</text>
+        <text class="tip-p">{{ r.description || '' }}</text>
       </view>
-    </view>
+    </ScreenBody>
 
     <FloatNav active="home" />
   </view>
 </template>
 
 <style>
-.simple-header {
+.home-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(250, 248, 245, 0.92);
+  backdrop-filter: blur(16rpx);
+}
+.home-header-nav {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16rpx 40rpx;
+  padding-left: 40rpx;
+  box-sizing: border-box;
+}
+.home-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.home-header-action {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0 40rpx 12rpx;
+  min-height: 64rpx;
+  box-sizing: border-box;
+}
+.recalc-link {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--color-coral);
+  padding: 8rpx 4rpx;
+  line-height: 1.2;
 }
 .tip-p {
   font-size: 28rpx;

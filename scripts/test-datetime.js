@@ -39,6 +39,36 @@ test('datetime - toTimestamp 兼容三种时间表示', async () => {
   assert.ok(Number.isNaN(toTimestamp({})))
 })
 
+test('datetime - toDateString 按业务时区(UTC+8)取日期', async () => {
+  const { toDateString } = await loadModule()
+
+  // 核心场景：UTC+8 的凌晨时段，toISOString 会退到前一天，本函数不应如此
+  // 2026-09-05 00:09 CST = 2026-09-04T16:09Z
+  assert.equal(toDateString(new Date('2026-09-05T00:09:00+08:00')), '2026-09-05')
+  // 07:59 CST 仍是前一天 23:59Z，必须仍取本地当天
+  assert.equal(toDateString(new Date('2026-09-05T07:59:00+08:00')), '2026-09-05')
+  // 08:00 CST 起 UTC 日期已追平
+  assert.equal(toDateString(new Date('2026-09-05T08:00:00+08:00')), '2026-09-05')
+  // 当日末尾
+  assert.equal(toDateString(new Date('2026-09-05T23:59:59+08:00')), '2026-09-05')
+  // 月末 / 跨年边界
+  assert.equal(toDateString(new Date('2026-09-30T23:59:00+08:00')), '2026-09-30')
+  assert.equal(toDateString(new Date('2026-12-31T23:59:00+08:00')), '2026-12-31')
+  assert.equal(toDateString(new Date('2027-01-01T00:00:00+08:00')), '2027-01-01')
+
+  // 与旧写法对比：确认差异真实存在（否则本测试无意义）
+  const early = new Date('2026-09-05T00:09:00+08:00')
+  assert.equal(early.toISOString().slice(0, 10), '2026-09-04', 'toISOString 确实会退一天')
+  assert.equal(toDateString(early), '2026-09-05', 'toDateString 不应退一天')
+
+  // 与后端口径一致
+  const dateUtil = require('../uniapp/cloudfunctions/api/common/date.js')
+  assert.equal(toDateString(early), dateUtil.toDateString(early), '前端与后端日期口径必须一致')
+
+  // 非法输入返回空串，不抛错
+  assert.equal(toDateString('not a date'), '')
+})
+
 test('datetime - countdownText 处理 ISO string（修复「NaN 小时 NaN 分钟」）', async () => {
   const { countdownText } = await loadModule()
   const now = 1700000000000  // 固定 now, 便于断言

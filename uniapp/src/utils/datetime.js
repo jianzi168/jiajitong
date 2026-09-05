@@ -27,6 +27,28 @@ export function toTimestamp(ts) {
 }
 
 /**
+ * 业务时区（UTC+8，中国全境无夏令时）下的日期串 'YYYY-MM-DD'
+ *
+ * 不要用 new Date().toISOString().slice(0, 10)：它输出的是 UTC。
+ * 在 UTC+8 的 00:00–08:00 之间，本地零点等于前一日 16:00Z，
+ * 会取到前一天的日期——导出文件名、报表标题等场景会出现日期错一天。
+ *
+ * 与后端 cloudfunctions/api/common/date.js 的 toDateString 保持同一口径。
+ *
+ * @param {Date|number|string} [dt]
+ * @returns {string}
+ */
+export function toDateString(dt = new Date()) {
+  const ts = dt instanceof Date ? dt.getTime() : Date.parse(dt)
+  if (Number.isNaN(ts)) return ''
+  const shifted = new Date(ts + 8 * 3600000)
+  const y = shifted.getUTCFullYear()
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(shifted.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/**
  * 剩余时间倒计时 (e.g. "12 小时 34 分钟")
  * @param {string|number|Date} ts - 目标时间
  * @param {number} [now] - 当前时间(用于测试注入固定 now)
@@ -59,7 +81,7 @@ export function countdownTextDetail(ts, now = Date.now()) {
   return `${h} 小时 ${m} 分钟 ${s} 秒`
 }
 
-export default { toTimestamp, countdownText, countdownTextDetail }
+export default { toTimestamp, toDateString, countdownText, countdownTextDetail, createNowTicker }
 
 /**
  * 创建一个响应式 now ticker (每 intervalMs 触发一次更新)
