@@ -9,18 +9,50 @@ import { trackPage } from '@/utils/analytics'
 const loading = ref(true)
 const review = ref(null) // { has_data, month_label, metrics, overspend_top, surplus_top, suggestion }
 
-onShow(async () => {
-  trackPage('review')
+// 月份导航：后端 reviews.getMonthly 本就支持任意年月（含跨月按天分摊），
+// 此前前端从不传参，导致用户只能看本月、无法回看历史。
+const now = new Date()
+const year = ref(now.getFullYear())
+const month = ref(now.getMonth() + 1)
+
+const isCurrentMonth = computed(
+  () => year.value === now.getFullYear() && month.value === now.getMonth() + 1
+)
+
+async function load() {
   loading.value = true
   try {
-    const res = await getMonthlyReview({})
+    const res = await getMonthlyReview({ year: year.value, month: month.value })
     review.value = res
   } catch (e) {
     review.value = null
   } finally {
     loading.value = false
   }
+}
+
+onShow(async () => {
+  trackPage('review')
+  // 每次进入都回到本月（避免停留在旧月份看到过期数据）
+  year.value = now.getFullYear()
+  month.value = now.getMonth() + 1
+  await load()
 })
+
+function onPrevMonth() {
+  const d = new Date(year.value, month.value - 2, 1)
+  year.value = d.getFullYear()
+  month.value = d.getMonth() + 1
+  load()
+}
+
+function onNextMonth() {
+  if (isCurrentMonth.value) return
+  const d = new Date(year.value, month.value, 1)
+  year.value = d.getFullYear()
+  month.value = d.getMonth() + 1
+  load()
+}
 
 const hasData = computed(() => review.value && review.value.has_data)
 const metrics = computed(() => (review.value && review.value.metrics) || null)
@@ -34,6 +66,9 @@ const metricItems = computed(() => {
   items.push({ val: prev !== null && prev !== undefined ? `${prev}→${hs}` : `${hs}`, key: '健康分' })
   return items
 })
+
+// 空态文案随所选月份变化（历史月说"该月"，本月说"本月"）
+const emptyMonthLabel = computed(() => (isCurrentMonth.value ? '本月' : `${month.value}月`))
 
 function onWeekly() {
   uni.navigateTo({ url: '/pages/weekly/index' })
@@ -49,6 +84,17 @@ function onFullReport() {
     <NavBar :title="(review && review.month_label || '本月') + '复盘'" />
 
     <ScreenBody class="screen-body-scroll">
+      <!-- 月份切换 -->
+      <view class="month-switch">
+        <text class="month-arrow" @tap="onPrevMonth">‹</text>
+        <text class="month-label">{{ year }} 年 {{ month }} 月{{ isCurrentMonth ? '（本月）' : '' }}</text>
+        <text
+          class="month-arrow"
+          :class="{ disabled: isCurrentMonth }"
+          @tap="onNextMonth"
+        >›</text>
+      </view>
+
       <!-- 加载中 -->
       <view v-if="loading" class="review-empty">
         <text class="empty-sub">加载中…</text>
@@ -56,7 +102,7 @@ function onFullReport() {
 
       <!-- 无数据 -->
       <view v-else-if="!hasData" class="review-empty">
-        <text class="empty-title">本月暂无记账数据</text>
+        <text class="empty-title">{{ emptyMonthLabel }}暂无记账数据</text>
         <text class="empty-sub">先去填写本周支出，月末自动生成复盘</text>
         <button class="grad-btn" style="margin-top: 16rpx;" @tap="onWeekly">填写本周支出</button>
       </view>
@@ -89,7 +135,7 @@ function onFullReport() {
           </view>
         </view>
         <view v-else class="review-none glass-card">
-          <text>本月无超支分类 🎉</text>
+          <text>{{ emptyMonthLabel }}无超支分类 🎉</text>
         </view>
 
         <text class="section-heading">结余 Top</text>
@@ -146,5 +192,28 @@ function onFullReport() {
   padding: 28rpx 32rpx;
   font-size: 28rpx;
   color: var(--color-text-3);
+}
+.month-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 40rpx;
+  padding: 8rpx 0 24rpx;
+}
+.month-arrow {
+  font-size: 44rpx;
+  line-height: 1;
+  color: var(--color-text);
+  padding: 8rpx 24rpx;
+}
+.month-arrow.disabled {
+  color: var(--color-text-3);
+  opacity: 0.4;
+}
+.month-label {
+  font-size: 28rpx;
+  color: var(--color-text-2);
+  min-width: 260rpx;
+  text-align: center;
 }
 </style>
