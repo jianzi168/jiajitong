@@ -1,15 +1,17 @@
 /**
  * 云数据库集合初始化脚本（开发计划 Phase 0.2 + 技术方案 §4）
  *
- * 用 wx-server-sdk 在目标云开发环境创建 5 个集合 + 索引。
+ * 用 wx-server-sdk 在目标云开发环境创建集合 + 索引（当前 14 个集合）。
  *
  * 运行:
  *   1. 微信开发者工具 → 编辑器 → 右下角"终端"
- *   2. 输入: node scripts/create-collections.js cloud1-0g12dcf7941e979c
+ *   2. 输入: node scripts/create-collections.js <envId>
  *
  * 注意:
- *   - 云函数环境必须已经初始化（wx.cloud.init）
+ *   - 本脚本需要 wx-server-sdk 与真实 envId，只能在微信开发者工具内运行；
+ *     本地直接 node 执行会因缺少 SDK 报错，属预期行为。
  *   - 如果集合已存在, skip 不报错
+ *   - 集合清单需与 scripts/check-indexes.js 保持一致
  */
 'use strict'
 
@@ -24,17 +26,23 @@ async function main() {
   const db = cloud.database()
 
   const collections = [
+    // ---- 代码实际在读写的集合（12 个）----
     'users', 'families', 'financial_profiles', 'budget_plans', 'weekly_entries',
-    // Phase 8 分享/订阅消息模板配置
-    'app_config',
-    // Phase 9 预留
-    'recommendation_status', 'family_invites', 'calc_sessions', 'analytics_events', 'family_members',
-    // Phase 10 行动清单写库
-    'action_statuses',
-    // Phase 10 订阅消息推送
-    'subscribe_records',
-    // 帮助与反馈
-    'feedbacks',
+    'app_config',            // 分享/订阅消息模板配置
+    'family_invites',        // 伴侣邀请码
+    'family_members',        // 家庭成员
+    'analytics_events',      // 埋点
+    'action_statuses',       // 行动清单采纳状态
+    'subscribe_records',     // 订阅消息推送配额
+    'feedbacks',             // 帮助与反馈
+
+    // ---- 设计预留、代码尚未使用（2 个）----
+    // 技术方案 §4 有定义，但应用代码从未读写：
+    //   - recommendation_status：建议采纳状态最终落在 action_statuses，本集合未启用
+    //   - calc_sessions：免登录测算暂存未实现，当前测算结果不落库
+    // 保留建集合是为了与 check-indexes.js 及技术方案保持一致；
+    // 若确认不再需要，需同时改这三处，避免文档与脚本脱节。
+    'recommendation_status', 'calc_sessions',
   ]
 
   console.log('=== 1. 创建集合 ===')

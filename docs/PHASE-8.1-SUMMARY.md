@@ -1,9 +1,23 @@
 # Phase 8.1 商业化硬化 — 收口记录
 
+> [!WARNING]
+> **本文为历史存档，描述的绝大部分代码已被删除，请勿按本文实施开发。**
+>
+> 2026-08 的三次提交（`f0c4bf8` / `f654f25` / `57ceccf`）已移除支付与订阅链路：
+> `paywall` 页面、`stores/subscription.js`、`utils/paywallRedirect.js`、
+> 后端 `orders.*` / `subscription.*` 系列 action、`scripts/test-commercialization.js` 等均已删除。
+> 因此本文 §1 的 Task 1–6、§2.1 的四个测试、§2.5 的建库回填、§4 的已知限制
+> **均已不适用**；§6 引用的部分文件也已不存在。
+>
+> 保留本文仅作历史决策记录（为何做过这套硬化、当时的验证结论）。
+> 若未来重启商业化，需重新设计而非照本文实施。
+>
+> 当前工程状态请以 `docs/代码与文档深度分析报告.md` 为准。
+
 > 分支: `feature/phase-8-commercialization`
 > 基线: `384d48fe` (main)，父提交: `5afcf9e` (Task 6)
 > 收口提交: Task 7 (本文件)
-> 设计: `docs/PHASE-8.1-HARDENING-PLAN.md`
+> 设计: `docs/PHASE-8.1-HARDENING-PLAN.md`（已删除）
 > 任务卡: `.superpowers/sdd/2026-08-01-phase-8-1-commercialization-hardening/task-*.md`
 
 ---

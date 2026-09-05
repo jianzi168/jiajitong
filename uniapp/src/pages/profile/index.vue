@@ -1,7 +1,5 @@
 <script setup>
 import ScreenBody from '@/components/ScreenBody.vue'
-import { computed } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
 import FloatNav from '@/components/FloatNav.vue'
 import { getCapsuleSafeArea } from '@/utils/capsule'
 
@@ -10,16 +8,8 @@ const { statusBarHeight, navBarHeight, capsuleReserveRight } = getCapsuleSafeAre
 const bannerBodyHeight = typeof uni.upx2px === 'function' ? uni.upx2px(28 + 112 + 40) : 90
 const headerPlaceholder = statusBarHeight + navBarHeight + bannerBodyHeight
 
-function fmtDate(ms) {
-  if (!ms) return ''
-  const d = new Date(ms)
-  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
-}
-
-// Phase 10 商业化关闭：前期不做支付，订阅管理入口移除、权益全量开放
-const subscriptionLabel = computed(() => {
-  return 'Pro 功能全量开放'
-})
+// 商业化已关闭（支付/订阅链路移除），权益全量开放，此处仅作说明文案
+const subscriptionLabel = 'Pro 功能全量开放'
 
 const menus = [
   { label: '家庭档案', url: '/pages/family/index' },

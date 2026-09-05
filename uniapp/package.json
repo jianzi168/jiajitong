@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "家计通 UniApp（微信小程序）",
   "scripts": {
-    "dev:mp-weixin": "uni -p mp-weixin",
-    "build:mp-weixin": "uni build -p mp-weixin",
-    "test": "node --test ../scripts/test-engine.js ../scripts/test-api.js ../scripts/test-rules.js ../scripts/test-auth.js"
+    "dev:mp-weixin": "rm -rf dist/dev/mp-weixin/cloudfunctions && cp -r cloudfunctions dist/dev/mp-weixin/cloudfunctions && uni -p mp-weixin",
+    "build:mp-weixin": "uni build -p mp-weixin && rm -rf dist/build/mp-weixin/cloudfunctions && cp -r cloudfunctions dist/build/mp-weixin/cloudfunctions",
+    "test": "npm run test:cloud && npm run test:client",
+    "test:cloud": "node --test \"../scripts/test-*.js\"",
+    "test:client": "node scripts/test-share-qr.js && node scripts/test-partner-invite-state.js && node scripts/test-placeholder-feedback.js",
+    "sync:cf": "rm -rf dist/dev/mp-weixin/cloudfunctions && cp -r cloudfunctions dist/dev/mp-weixin/cloudfunctions"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-4060620250520001",

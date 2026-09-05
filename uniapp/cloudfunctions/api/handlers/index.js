@@ -14,6 +14,8 @@
 const benchmark = require('../common/benchmark-data')
 const engine = require('../common/engine')
 const { ok, fail, ERROR_CODE } = require('../common/response')
+const dateUtil = require('../common/date')
+const planRecalc = require('../common/plan-recalc')
 
 // ============================================================
 // 集中式鉴权 guard (安全审计 Phase 9)
@@ -52,6 +54,10 @@ try {
   usingCloudDb = false
 }
 
+// 注意：本地测试路径下 db 为 null，因为 handlers 里大量分支是
+// `if (db) { 云端 } else { 内存 }` 这种真值判断，而非 if (usingCloudDb)。
+// 纯函数（不碰库）一律放 common/plan-recalc.js，由 handlers 直接 require，
+// 避免"云端/内存两条路径各写一份逻辑导致本地通过、线上不一致"。
 const db = usingCloudDb ? require('../common/db') : null
 
 // 本地内存 store (单测/探针)
@@ -228,6 +234,9 @@ async function plansSave(ctx, payload) {
       _id: 'plan_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
       family_id: familyId,
       version: memoryStore.budget_plans.size + 1,
+      // 必须与云端 db.savePlan 保持同构：缺了 plan_input 就无法重算，
+      // 缺了 engine_version 就无法识别旧版本方案，本地测试也就覆盖不到迁移逻辑。
+      engine_version: planOutput.engine_version || planRecalc.ENGINE_VERSION,
       health_score: planOutput.health_score,
       risk_level: planOutput.risk_level,
       is_active: true,
@@ -236,6 +245,7 @@ async function plansSave(ctx, payload) {
       baby_reserve: planOutput.baby_reserve,
       recommendations: planOutput.recommendations || [],
       risk_report: planOutput.risk_report,
+      plan_input: planInput || null,
       created_at: new Date(),
       activated_at: prevActivatedAt,
     }
@@ -261,7 +271,57 @@ async function plansGetActive(ctx, payload) {
     plan = findActivePlanLocal(user.family_id)
   }
 
-  return ok({ plan: ensureRecommendations(plan) || null })
+  return ok({
+    plan: ensureRecommendations(plan) || null,
+    // 旧引擎生成的方案标记为 stale，提示需要重算（不在此处自动重算，
+    // 避免读接口带写副作用；正式迁移走 scripts/recalc-plans.js）
+    stale: isPlanStale(plan),
+  })
+}
+
+// ---------- plans.recalc（按当前引擎重算存量方案）----------
+/**
+ * 用当前引擎重算当前生效方案并落库。
+ *
+ * 与 scripts/recalc-plans.js 共用 db.computePlanUpdate()，口径一致。
+ * 需要 owner 权限：重算会覆盖方案的派生字段。
+ */
+async function plansRecalc(ctx, payload) {
+  const authErr = requireAuth(ctx); if (authErr) return authErr
+  const openid = ctx.openid
+
+  let user, plan
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    const ownerErr = requireOwner(user); if (ownerErr) return ownerErr
+    plan = await db.getActivePlan(user.family_id)
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    const ownerErr = requireOwner(user); if (ownerErr) return ownerErr
+    plan = findActivePlanLocal(user.family_id)
+  }
+
+  if (!plan) return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '当前没有生效的预算方案')
+  if (!plan.plan_input) {
+    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '该方案缺少原始输入，无法重算，请重新测算')
+  }
+
+  if (usingCloudDb) {
+    const updated = await db.recalcAndPersistPlan(plan._id)
+    if (!updated) {
+      return fail(ERROR_CODE.ENGINE_ERROR, 'ENGINE_ERROR', '重算失败，请稍后重试')
+    }
+    return ok({ plan: ensureRecommendations(updated), stale: false })
+  }
+
+  // 内存路径：与云端、迁移脚本共用 planRecalc.computePlanUpdate，只是写到 memoryStore
+  const update = planRecalc.computePlanUpdate(plan)
+  if (!update) return fail(ERROR_CODE.ENGINE_ERROR, 'ENGINE_ERROR', '重算失败，请稍后重试')
+  const merged = { ...plan, ...update }
+  memoryStore.budget_plans.set(plan._id, merged)
+  return ok({ plan: ensureRecommendations(merged), stale: false })
 }
 
 // ---------- helpers (Phase 7) ----------
@@ -269,6 +329,17 @@ function colorOf(pct) {
   if (pct >= 90) return 'red'
   if (pct >= 70) return 'yellow'
   return 'green'
+}
+
+/**
+ * 储蓄/储备类进度配色。
+ * 与 colorOf 相反：colorOf 用于「已花占比」（越高越危险），
+ * 本函数用于「目标完成度」（越高越好）。
+ */
+function progressColorOf(pct) {
+  if (pct >= 100) return 'green'
+  if (pct >= 70) return 'yellow'
+  return 'red'
 }
 
 // 把 plan.baby_reserve 原始 shape 转成前端可直读 shape
@@ -280,47 +351,59 @@ function shapeBabyReserve(br) {
   return { ...br, pct, color: colorOf(pct) }
 }
 
-// 兜底：旧数据 recommendations 为空时，构造一条正向维持建议，避免行动清单空态
+/**
+ * 兜底：旧数据 recommendations 为空时，补一条正向维持建议，避免行动清单空态。
+ *
+ * **纯函数，不修改入参**（历史实现直接 mutate 传入的 plan，
+ * 调用方拿到的对象被悄悄改掉，排查困难）。返回新对象。
+ *
+ * 注意：这里只在内存中补齐展示，不落库。存量数据的持久化重算
+ * 走 scripts/recalc-plans.js 或 plans.recalc。
+ */
 function ensureRecommendations(plan) {
   if (!plan) return plan
   if (plan.recommendations && plan.recommendations.length) return plan
   const score = plan.health_score || 0
   const healthy = score >= 80
-  plan.recommendations = [{
-    id: 'R-POSITIVE',
-    title: healthy ? '财务状况优秀，继续保持' : '财务状况良好，仍可微调',
-    severity: 'green',
-    category: 'R-POSITIVE',
-    description: healthy
-      ? `当前健康分 ${score} 分，整体财务状况优秀，暂无需要调整的风险项。`
-      : `当前健康分 ${score} 分，整体情况良好，可继续优化储蓄结构。`,
-    actions: healthy ? [
-      '保持当前储蓄节奏，建议设置工资到账自动转账',
-      '将多余资金配置到稳健理财或长期投资',
-      '每季度回顾一次预算分配',
-    ] : [
-      '尝试把储蓄率提升到收入的 20% 以上',
-      '优先补齐 3-6 个月应急金',
-      '减少非必要支出，把释放资金用于长期目标',
-    ],
-    impact: 0,
-    feasibility: 0.9,
-    stage_weight: 1,
-    estimatedImpact: healthy ? '维持当前健康状态' : '进一步提升财务健康度',
-    score: 1,
-  }]
-  return plan
+  return {
+    ...plan,
+    recommendations: [{
+      id: 'R-POSITIVE',
+      title: healthy ? '财务状况优秀，继续保持' : '财务状况良好，仍可微调',
+      severity: 'green',
+      category: 'R-POSITIVE',
+      description: healthy
+        ? `当前健康分 ${score} 分，整体财务状况优秀，暂无需要调整的风险项。`
+        : `当前健康分 ${score} 分，整体情况良好，可继续优化储蓄结构。`,
+      actions: healthy ? [
+        '保持当前储蓄节奏，建议设置工资到账自动转账',
+        '将多余资金配置到稳健理财或长期投资',
+        '每季度回顾一次预算分配',
+      ] : [
+        '尝试把储蓄率提升到收入的 20% 以上',
+        '优先补齐 3-6 个月应急金',
+        '减少非必要支出，把释放资金用于长期目标',
+      ],
+      impact: 0,
+      feasibility: 0.9,
+      stage_weight: 1,
+      estimatedImpact: healthy ? '维持当前健康状态' : '进一步提升财务健康度',
+      score: 1,
+    }],
+  }
+}
+
+/**
+ * 判断方案是否由旧版引擎生成（供前端/运维识别待迁移数据）
+ */
+function isPlanStale(plan) {
+  return planRecalc.isPlanStale(plan)
 }
 
 function isoWeekRange(d = new Date()) {
-  // ISO 周一
-  const day = d.getDay() || 7 // 周日=0 视作 7
-  const monday = new Date(d)
-  monday.setDate(d.getDate() - (day - 1))
-  const sunday = new Date(monday)
-  sunday.setDate(monday.getDate() + 6)
-  const iso = (dt) => dt.toISOString().slice(0, 10)
-  return { weekStart: iso(monday), weekEnd: iso(sunday) }
+  // ISO 周一。日期一律走 common/date，避免 toISOString 的 UTC 偏移
+  // （历史 BUG：UTC+8 下算出周日而非周一，且月份聚合边界错位一天）
+  return dateUtil.weekRange(d)
 }
 
 const WEEKLY_CAT_IDS = ['food', 'daily', 'entertainment', 'medical', 'clothing', 'transport', 'other']
@@ -352,17 +435,49 @@ function findLastWeekEntryLocal(familyId, beforeWeekStart) {
   return best
 }
 
-// 本地 helper: 本月 entries (week_start 在 [first, last] 之间)
+// 本地 helper: 与目标月份【有重叠】的 entries
+// 与 db.getMonthOverlappingEntries 保持一致：向左放宽 7 天，
+// 让 week_start 在上月月末、但周内含本月日期的记录也能被分摊。
 function findMonthlyEntriesLocal(familyId, year, month) {
-  const firstDay = new Date(year, month - 1, 1).toISOString().slice(0, 10)
-  const nextFirst = new Date(year, month, 1).toISOString().slice(0, 10)
+  const { start: firstDay, nextStart: nextFirst } = dateUtil.monthFilter(year, month)
+  const lowerBound = shiftDateString(firstDay, -7)
   const out = []
   for (const [, v] of memoryStore.weekly_entries) {
-    if (v && v.family_id === familyId && v.week_start >= firstDay && v.week_start < nextFirst) {
+    if (v && v.family_id === familyId && v.week_start >= lowerBound && v.week_start < nextFirst) {
       out.push(v)
     }
   }
   return out
+}
+
+/** 'YYYY-MM-DD' 平移 N 天（本地内存路径用） */
+function shiftDateString(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return dateUtil.toDateString(new Date(Date.UTC(y, m - 1, d) + days * 86400000))
+}
+
+/**
+ * 把周记账按"落在目标月内的天数比例"分摊累加到 usedByCat。
+ *
+ * 跨月周若整周归属单一月份，会让相邻月份各有一天数区间的支出"凭空消失"
+ * 或"重复计入"。按天比例分摊是近似（假设周内日均支出均匀），
+ * 但在无逐日流水的前提下是最合理的口径。
+ */
+function accumulateEntriesByDayShare(monthEntries, year, month) {
+  const usedByCat = { food: 0, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 }
+  for (const e of monthEntries) {
+    const days = dateUtil.daysOfWeekInMonth(e.week_start, year, month)
+    if (days <= 0) continue
+    const ratio = days / 7
+    for (const k of Object.keys(usedByCat)) {
+      usedByCat[k] += Number((e.categories && e.categories[k]) || 0) * ratio
+    }
+  }
+  // 分摊会产生小数，统一在此取整，避免各调用点口径不一
+  for (const k of Object.keys(usedByCat)) {
+    usedByCat[k] = Math.round(usedByCat[k])
+  }
+  return usedByCat
 }
 
 // ---------- plans.activate (Phase 7) ----------
@@ -430,25 +545,28 @@ async function dashboardGet(ctx, payload) {
       plan: ensureRecommendations(plan),
       categories: [],
       totals: null,
+      // 未启用追踪：无填报数据，actual 为 null（前端提示「启用追踪后可见」）
+      savings: {
+        actual: null,
+        target: Number((plan.monthly_summary && plan.monthly_summary.savings_target) || 0),
+        pct: null,
+        color: null,
+      },
       baby_reserve: babyComputed,
     })
   }
 
-  // activated=true: 聚合本月 entries
+  // activated=true: 聚合本月 entries（跨月周按天比例分摊）
   const now = new Date()
+  const { year: curYear, month: curMonth } = dateUtil.monthRange(now)
   let monthEntries
   if (usingCloudDb) {
-    monthEntries = await db.getMonthlyEntries(user.family_id, now.getFullYear(), now.getMonth() + 1)
+    monthEntries = await db.getMonthOverlappingEntries(user.family_id, curYear, curMonth)
   } else {
-    monthEntries = findMonthlyEntriesLocal(user.family_id, now.getFullYear(), now.getMonth() + 1)
+    monthEntries = findMonthlyEntriesLocal(user.family_id, curYear, curMonth)
   }
 
-  const usedByCat = { food: 0, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 }
-  for (const e of monthEntries) {
-    for (const k of Object.keys(usedByCat)) {
-      usedByCat[k] += Number((e.categories && e.categories[k]) || 0)
-    }
-  }
+  const usedByCat = accumulateEntriesByDayShare(monthEntries, curYear, curMonth)
 
   const categories = (plan.categories || []).map((c) => {
     const used = usedByCat[c.id] || 0
@@ -467,8 +585,29 @@ async function dashboardGet(ctx, payload) {
     plan: ensureRecommendations(plan),
     categories,
     totals: { used: totalUsed, suggested: totalSuggested, pct: totalPct, color: colorOf(totalPctRaw) },
+    // 本月实际储蓄 = 收入 − 固定支出 − 本月已填报支出
+    // 未启用追踪时无填报数据，actual 返回 null，前端应提示「启用追踪后可见」，
+    // 不能退化为 0——那会把全部可支配收入谎报成已储蓄。
+    savings: computeSavings(plan, totalUsed),
     baby_reserve: babyComputed,
   })
+}
+
+/**
+ * 本月储蓄进度
+ * @param {object} plan - 含 monthly_summary
+ * @param {number} spentThisMonth - 本月已填报支出合计
+ * @returns {{actual: number|null, target: number, pct: number|null, color: string|null}}
+ */
+function computeSavings(plan, spentThisMonth) {
+  const ms = (plan && plan.monthly_summary) || {}
+  const target = Number(ms.savings_target) || 0
+  const actual = Math.max(
+    0,
+    Math.round((Number(ms.income) || 0) - (Number(ms.fixed_expense) || 0) - (Number(spentThisMonth) || 0))
+  )
+  const pct = target > 0 ? Math.min(100, Math.round((actual / target) * 100)) : null
+  return { actual, target, pct, color: pct === null ? null : progressColorOf(pct) }
 }
 
 // ---------- weekly.getCurrent (Phase 7) ----------
@@ -889,20 +1028,15 @@ async function reviewsGetMonthly(ctx, payload) {
 
   if (!plan) return ok(emptyRes)
 
-  // 聚合该月 entries
+  // 聚合该月 entries（跨月周按天比例分摊）
   let monthEntries
   if (usingCloudDb) {
-    monthEntries = await db.getMonthlyEntries(user.family_id, y, m)
+    monthEntries = await db.getMonthOverlappingEntries(user.family_id, y, m)
   } else {
     monthEntries = findMonthlyEntriesLocal(user.family_id, y, m)
   }
 
-  const usedByCat = { food: 0, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 }
-  for (const e of monthEntries) {
-    for (const k of Object.keys(usedByCat)) {
-      usedByCat[k] += Number((e.categories && e.categories[k]) || 0)
-    }
-  }
+  const usedByCat = accumulateEntriesByDayShare(monthEntries, y, m)
 
   // 每类: used / suggested / pct(未截断, 保留真实超支比例)
   const catStats = (plan.categories || []).map((c) => {
@@ -946,15 +1080,12 @@ async function reviewsGetMonthly(ctx, payload) {
   const prevY = m === 1 ? y - 1 : y
   let prevEntries = []
   if (usingCloudDb) {
-    prevEntries = await db.getMonthlyEntries(user.family_id, prevY, prevM)
+    prevEntries = await db.getMonthOverlappingEntries(user.family_id, prevY, prevM)
   } else {
     prevEntries = findMonthlyEntriesLocal(user.family_id, prevY, prevM)
   }
   if (prevEntries.length) {
-    const prevUsed = { food: 0, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 }
-    for (const e of prevEntries) {
-      for (const k of Object.keys(prevUsed)) prevUsed[k] += Number((e.categories && e.categories[k]) || 0)
-    }
+    const prevUsed = accumulateEntriesByDayShare(prevEntries, prevY, prevM)
     let ps = 100
     for (const c of activeCats) {
       const p = (prevUsed[c.id] || 0)
@@ -1440,6 +1571,7 @@ module.exports = {
   'plans.save': plansSave,
   'plans.getActive': plansGetActive,
   'plans.activate': plansActivate,
+  'plans.recalc': plansRecalc,
   'dashboard.get': dashboardGet,
   'weekly.getCurrent': weeklyGetCurrent,
   'weekly.submit': weeklySubmit,
@@ -1493,6 +1625,10 @@ module.exports = {
   /** 测试用: 列出 memoryStore 反馈 */
   _allFeedbacks() {
     return Array.from(memoryStore.feedbacks.values())
+  },
+  /** 测试用: 列出 memoryStore 预算方案（校验读接口是否为纯读） */
+  _allPlans() {
+    return Array.from(memoryStore.budget_plans.values())
   },
   /** 测试用: 种入 app_config（如订阅消息模板 ID） */
   _seedAppConfig(key, value) {

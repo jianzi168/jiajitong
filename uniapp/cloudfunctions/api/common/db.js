@@ -11,6 +11,9 @@
  */
 'use strict'
 
+const dateUtil = require('./date')
+const { ENGINE_VERSION } = require('./engine/constants')
+
 function getDB() {
   // lazy require: 云函数环境有 wx-server-sdk，本地测试则抛错由 handler fallback
   const cloud = require('wx-server-sdk')
@@ -141,6 +144,8 @@ async function savePlan({ familyId, planInput, planOutput }) {
   const data = {
     family_id: familyId,
     version,
+    // 引擎版本：缺则说明是升级前存的旧方案，迁移脚本据此定位
+    engine_version: planOutput.engine_version || ENGINE_VERSION,
     health_score: planOutput.health_score,
     risk_level: planOutput.risk_level,
     is_active: true,
@@ -158,37 +163,47 @@ async function savePlan({ familyId, planInput, planOutput }) {
   return { _id: id, ...data }
 }
 
+/**
+ * 读取当前生效方案 —— **纯读，不写库**
+ *
+ * 历史实现在此处内嵌了"建议为空则重跑引擎并回写"的修复逻辑，
+ * 导致读操作带写副作用：每次命中都触发一次全量测算 + 一次 DB 写入，
+ * 云函数耗时与并发行为不可控，且失败时被静默吞掉返回旧数据。
+ *
+ * 现在职责拆开：
+ *   - 需要修复/升级存量数据时，走 scripts/recalc-plans.js 显式迁移；
+ *   - 读取路径只负责读，缺失的建议由 handlers 的 ensureRecommendations()
+ *     在内存中补齐（不落库），保证展示不受影响。
+ */
 async function getActivePlan(familyId) {
   const db = getDB()
   const { data } = await db.collection('budget_plans').where({
     family_id: familyId,
     is_active: true,
   }).limit(1).get()
-  const plan = data[0] || null
-  // 修复历史数据：若建议为空且保存了原始输入，重新跑引擎补回建议
-  if (plan && plan.plan_input && (!plan.recommendations || !plan.recommendations.length)) {
-    try {
-      const engine = require('./engine')
-      const recalculated = engine.calcFull(plan.plan_input)
-      if (recalculated && recalculated.recommendations && recalculated.recommendations.length) {
-        await db.collection('budget_plans').doc(plan._id).update({
-          data: {
-            recommendations: recalculated.recommendations,
-            health_score: recalculated.health_score,
-            risk_level: recalculated.risk_level,
-            monthly_summary: recalculated.monthly_summary || plan.monthly_summary,
-            categories: recalculated.categories || plan.categories,
-            baby_reserve: recalculated.baby_reserve || plan.baby_reserve,
-            risk_report: recalculated.risk_report || plan.risk_report,
-          },
-        })
-        return { ...plan, recommendations: recalculated.recommendations }
-      }
-    } catch (e) {
-      console.error('[db.getActivePlan] recalc failed', e)
-    }
-  }
-  return plan
+  return data[0] || null
+}
+
+// 重算的纯逻辑统一在 common/plan-recalc.js，db 只做转发，
+// 保证 handlers（内存路径）与云端路径、迁移脚本口径一致。
+const { isPlanStale, computePlanUpdate } = require('./plan-recalc')
+
+/**
+ * 就地重算并回写单个方案（显式写操作，供迁移脚本 / plans.recalc 调用）
+ * @returns {object|null} 更新后的完整方案；无需重算或失败返回 null
+ */
+async function recalcAndPersistPlan(planId) {
+  if (!planId) return null
+  const db = getDB()
+  const { data } = await db.collection('budget_plans').doc(planId).get()
+  const plan = Array.isArray(data) ? data[0] : data
+  if (!plan || !plan._id) return null
+
+  const update = computePlanUpdate(plan)
+  if (!update) return null
+
+  await db.collection('budget_plans').doc(planId).update({ data: update })
+  return { ...plan, ...update }
 }
 
 // ---------- weekly_entries ----------
@@ -597,24 +612,37 @@ async function activatePlan(planId) {
 }
 
 function currentMonthRange(d = new Date()) {
-  const y = d.getFullYear(), m = d.getMonth()
-  const first = new Date(y, m, 1)
-  const last  = new Date(y, m + 1, 0) // 当月最后一天
-  const iso = (dt) => dt.toISOString().slice(0, 10)
-  return { start: iso(first), end: iso(last), year: y, month: m + 1 }
+  // 走 common/date 按业务时区(UTC+8)换算，不再依赖运行环境 TZ
+  return dateUtil.monthRange(d)
 }
 
-async function getMonthlyEntries(familyId, year, month) {
+/**
+ * 取与目标月份【有重叠】的周记账。
+ *
+ * 之所以不是"week_start 落在月内"：一周 7 天可能跨月，
+ * 例如 8/31–9/6 这一周的 week_start 属 8 月，但其中 6 天在 9 月。
+ * 若按 week_start 过滤，9 月 1–6 日的支出会在 9 月看板中完全消失。
+ *
+ * 查询窗口向左放宽 7 天以覆盖跨月周，调用方再用
+ * dateUtil.daysOfWeekInMonth() 按天比例分摊。
+ */
+async function getMonthOverlappingEntries(familyId, year, month) {
   const db = getDB()
   const _ = db.command
-  // 用 month 字符串前缀简单过滤 + plan 周一起点即可
-  const firstDay = new Date(year, month - 1, 1).toISOString().slice(0, 10)
-  const nextFirst = new Date(year, month, 1).toISOString().slice(0, 10)
+  const { start: firstDay, nextStart: nextFirst } = dateUtil.monthFilter(year, month)
+  // 向左放宽 7 天：纳入 week_start 在上月月末、但周内含目标月日期的记录
+  const lowerBound = shiftDays(firstDay, -7)
   const res = await db.collection('weekly_entries').where({
     family_id: familyId,
-    week_start: _.gte(firstDay).and(_.lt(nextFirst))
+    week_start: _.gte(lowerBound).and(_.lt(nextFirst))
   }).get().catch(() => ({ data: [] }))
   return res.data || []
+}
+
+/** 'YYYY-MM-DD' 平移 N 天 */
+function shiftDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return dateUtil.toDateString(new Date(Date.UTC(y, m - 1, d) + days * 86400000))
 }
 
 async function getWeeklyEntry(familyId, weekStart) {
@@ -741,8 +769,11 @@ module.exports = {
   createFinancialProfile,
   savePlan,
   getActivePlan,
+  isPlanStale,
+  computePlanUpdate,
+  recalcAndPersistPlan,
   activatePlan,
-  getMonthlyEntries,
+  getMonthOverlappingEntries,
   getWeeklyEntry,
   saveWeeklyEntry,
   getLastWeekEntry,

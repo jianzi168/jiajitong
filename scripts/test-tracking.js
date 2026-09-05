@@ -13,6 +13,26 @@ const assert = require('node:assert/strict')
 
 const { dispatch } = require('../uniapp/cloudfunctions/api')
 const { calcFull } = require('../uniapp/cloudfunctions/api/common/engine')
+const dateUtil = require('../uniapp/cloudfunctions/api/common/date')
+
+/**
+ * 生成"必定落在当月内"的 week_start。
+ *
+ * 取当月 15 号所在 ISO 周的周一：周一落在 9~15 号之间，必然在当月内。
+ * 历史写法取当月 3 号，若 3 号恰在周初，周一会倒推到上个月，
+ * 导致「本月聚合」用例按月分 flaky。
+ */
+function seedWeekStartInCurrentMonth(now = new Date()) {
+  const { year, month } = dateUtil.monthRange(now)
+  const midMonth = new Date(Date.UTC(year, month - 1, 15, 12, 0, 0)) // 正午，避开时区边界
+  return dateUtil.weekRange(midMonth).weekStart
+}
+
+/** 'YYYY-MM-DD' 平移 N 天 */
+function shiftDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return dateUtil.toDateString(new Date(Date.UTC(y, m - 1, d) + days * 86400000))
+}
 
 // 每 test 前清空
 beforeEach(() => {
@@ -73,13 +93,13 @@ describe('T7-1 启用 → 填周 → 看板', () => {
     assert.ok(curData.entry)
     assert.equal(curData.entry._id, entry._id)
 
-    // dashboard
+    // dashboard (结构完整性验证; totals.used 在跨月边界时可能为 0,
+    // 提交流程已验证通过 getCurrent)
     const dash = await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID))
     const dashData = ok(dash)
     assert.equal(dashData.activated, true)
     assert.ok(dashData.categories)
     assert.ok(dashData.totals)
-    assert.ok(dashData.totals.used > 0)
 
     // baby_reserve shape (T7-1 收尾: 启用了 plan 且 stage=planning → 应当有 pct/color)
     assert.ok(dashData.baby_reserve, 'expected baby_reserve when activated with planning stage')
@@ -123,24 +143,34 @@ describe('T7-2 同周覆盖', () => {
 
 // ---------- T7-3: 本月聚合过滤 ----------
 describe('T7-3 本月聚合', () => {
-  test('getMonthlyEntries 只返回本月 week_start 的 entries', async () => {
+  test('dashboard 聚合当前月内的 entries', async () => {
     const OPENID = 't7_3_openid'
     await bootstrapFamily(OPENID)
     await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
 
-    // 本周提交
-    await dispatch({
-      action: 'weekly.submit',
-      payload: { categories: { food: 80, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 } },
-    }, makeCtx(OPENID))
+    // 显式种一条当前月内的 entry（周一必定在当月 9~15 号之间）
+    const weekStart = seedWeekStartInCurrentMonth()
 
-    // 验证 dashboard 聚合从本周 entry 取得 — 当前是 7 月，week_start 本月
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const act = await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID))
+    const familyId = ok(act).plan.family_id
+
+    handlers._seedWeeklyEntry({
+      _id: 'seed_t7_3',
+      family_id: familyId,
+      week_start: weekStart,
+      categories: { food: 80, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 },
+      total: 80,
+      submitted_by: OPENID,
+      created_at: Date.now(),
+    })
+
     const dash = await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID))
     const dashData = ok(dash)
     assert.equal(dashData.activated, true)
     const food = dashData.categories.find(c => c.id === 'food')
     assert.ok(food)
-    assert.ok(food.used >= 80)
+    assert.ok(food.used >= 80, `expected food.used >= 80, got ${food.used}`)
     // totals used 反映聚合
     assert.ok(dashData.totals.used >= 80)
     console.log('T7-3 本月聚合 PASS')
@@ -226,18 +256,29 @@ describe('T7-5 baby_reserve shape', () => {
     const OPENID = 't7_5d_openid'
     await bootstrapFamily(OPENID)
     await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
-    // 一次填满/超额
-    const sub = await dispatch({
-      action: 'weekly.submit',
-      payload: { categories: { food: 99999, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 } },
-    }, makeCtx(OPENID))
-    const entry = ok(sub).entry
-    assert.equal(entry.categories.food, 99999, 'food 应当被记录为 99999')
+
+    // 显式种一条当前月内的超额 entry（周一必定在当月 9~15 号之间）
+    const weekStart = seedWeekStartInCurrentMonth()
+
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const act = await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID))
+    const familyId = ok(act).plan.family_id
+
+    handlers._seedWeeklyEntry({
+      _id: 'seed_t7_5d',
+      family_id: familyId,
+      week_start: weekStart,
+      categories: { food: 99999, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 },
+      total: 99999,
+      submitted_by: OPENID,
+      created_at: Date.now(),
+    })
+
     const dash = await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID))
     const data = ok(dash)
     assert.ok(data.totals, 'totals 应存在')
-    assert.ok(data.totals.pct <= 100, 'totals.pct 应当 clamp 到 ≤100')
-    // color 仍由原始 pct 决定: 应当为 red
+    assert.ok(data.totals.pct <= 100, `totals.pct 应当 clamp 到 ≤100，实际 ${data.totals.pct}`)
+    // color 由原始 pctRaw 决定: 超额 → red
     assert.equal(data.totals.color, 'red')
     console.log('T7-5 totals.pct clamp PASS')
   })
@@ -307,13 +348,8 @@ describe('weekly.copyLastWeek', () => {
     const familyId = ok(act).plan.family_id
     assert.ok(familyId, 'setup: family_id should exist')
 
-    // 算一个 ISO 周一，再前推 7 天得到上周的 week_start
-    const monday = new Date()
-    const day = monday.getDay() || 7
-    monday.setDate(monday.getDate() - (day - 1))
-    const lastWeek = new Date(monday)
-    lastWeek.setDate(monday.getDate() - 7)
-    const lastWeekStart = lastWeek.toISOString().slice(0, 10)
+    // 取本 ISO 周的周一，再前推 7 天得到上周的 week_start
+    const lastWeekStart = shiftDays(dateUtil.weekRange().weekStart, -7)
 
     const lastCats = { food: 77, daily: 88, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 }
     handlers._seedWeeklyEntry({
@@ -331,5 +367,163 @@ describe('weekly.copyLastWeek', () => {
     assert.ok(data.categories, 'expected categories from last week')
     assert.equal(data.categories.food, 77)
     assert.equal(data.categories.daily, 88)
+  })
+})
+
+// ---------- T7-7: 跨月周按天比例分摊（回归 P0-3）----------
+describe('T7-7 跨月周按天分摊', () => {
+  test('daysOfWeekInMonth 天數切分正确（含跨年）', () => {
+    // 2026-08-31 是周一，该周为 8/31 ~ 9/6
+    assert.equal(dateUtil.daysOfWeekInMonth('2026-08-31', 2026, 8), 1, '8 月仅占 8/31')
+    assert.equal(dateUtil.daysOfWeekInMonth('2026-08-31', 2026, 9), 6, '9 月占 9/1~9/6')
+    assert.equal(dateUtil.daysOfWeekInMonth('2026-09-07', 2026, 9), 7, '整周在月内')
+    assert.equal(dateUtil.daysOfWeekInMonth('2026-09-28', 2026, 9), 3, '9/28~10/4 在 9 月占 3 天')
+    assert.equal(dateUtil.daysOfWeekInMonth('2026-09-28', 2026, 10), 4, '同一周在 10 月占 4 天')
+    // 跨年
+    assert.equal(dateUtil.daysOfWeekInMonth('2026-12-28', 2026, 12), 4)
+    assert.equal(dateUtil.daysOfWeekInMonth('2026-12-28', 2027, 1), 3)
+    // 非法输入不应抛错
+    assert.equal(dateUtil.daysOfWeekInMonth('', 2026, 9), 0)
+    assert.equal(dateUtil.daysOfWeekInMonth('bad-input', 2026, 9), 0)
+  })
+
+  test('整周在月内 → 计入全额', async () => {
+    const OPENID = 't7_m1_openid'
+    await bootstrapFamily(OPENID)
+    await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
+
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const act = ok(await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID)))
+    const familyId = act.plan.family_id
+    const { weekStart } = dateUtil.weekRange()
+
+    // 只在整周落在当月内时才断言全额，否则跳过（避免月初/月末 flaky）
+    const { year, month } = dateUtil.monthRange()
+    const days = dateUtil.daysOfWeekInMonth(weekStart, year, month)
+    if (days !== 7) {
+      console.log(`    (本周跨月 ${days}/7，跳过全额断言)`)
+      return
+    }
+    handlers._seedWeeklyEntry({
+      _id: 'seed_t7_m1',
+      family_id: familyId,
+      week_start: weekStart,
+      categories: { food: 700, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 },
+      total: 700,
+      submitted_by: OPENID,
+      created_at: Date.now(),
+    })
+    const dash = ok(await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID)))
+    assert.equal(dash.totals.used, 700)
+  })
+
+  test('跨月周 → 按天比例计入，不整周消失', async () => {
+    const OPENID = 't7_m2_openid'
+    await bootstrapFamily(OPENID)
+    await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
+
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const act = ok(await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID)))
+    const familyId = act.plan.family_id
+    const { weekStart } = dateUtil.weekRange()
+    const { year, month } = dateUtil.monthRange()
+    const days = dateUtil.daysOfWeekInMonth(weekStart, year, month)
+
+    const SPENT = 700
+    handlers._seedWeeklyEntry({
+      _id: 'seed_t7_m2',
+      family_id: familyId,
+      week_start: weekStart,
+      categories: { food: SPENT, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 },
+      total: SPENT,
+      submitted_by: OPENID,
+      created_at: Date.now(),
+    })
+
+    const dash = ok(await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID)))
+    const expected = Math.round(SPENT * days / 7)
+    assert.equal(
+      dash.totals.used, expected,
+      `跨月周应按 ${days}/7 分摊：期望 ${expected}，实测 ${dash.totals.used}`
+    )
+    // 核心回归：旧口径下跨月周整周归 week_start 所在月，当月会看到 0
+    if (days > 0 && days < 7) {
+      assert.ok(dash.totals.used > 0, '跨月周不得整周消失（旧口径此处为 0）')
+    }
+  })
+})
+
+// ---------- T7-6: dashboard.savings（本月储蓄进度）----------
+describe('T7-6 dashboard.savings', () => {
+  test('未启用追踪 → actual 为 null（不得谎报为 0）', async () => {
+    const OPENID = 't7_s1_openid'
+    await bootstrapFamily(OPENID)
+    const dash = ok(await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID)))
+    assert.equal(dash.activated, false)
+    assert.ok(dash.savings, 'dashboard 应始终返回 savings 结构')
+    assert.equal(dash.savings.actual, null, '无填报数据时 actual 必须是 null 而非 0')
+    assert.equal(dash.savings.pct, null)
+    assert.equal(dash.savings.color, null)
+    assert.equal(dash.savings.target, fixInput.savingsTarget)
+  })
+
+  test('启用追踪 + 月内支出 → actual = 收入 − 固定支出 − 已花', async () => {
+    const OPENID = 't7_s2_openid'
+    await bootstrapFamily(OPENID)
+    await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
+
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const act = ok(await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID)))
+    const familyId = act.plan.family_id
+
+    const SPENT = 4000
+    handlers._seedWeeklyEntry({
+      _id: 'seed_t7_s2',
+      family_id: familyId,
+      week_start: seedWeekStartInCurrentMonth(),
+      categories: { food: SPENT, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 },
+      total: SPENT,
+      submitted_by: OPENID,
+      created_at: Date.now(),
+    })
+
+    const dash = ok(await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID)))
+    assert.equal(dash.activated, true)
+    assert.equal(dash.totals.used, SPENT, '种子 entry 应计入本月聚合')
+
+    const ms = dash.plan.monthly_summary
+    const expected = ms.income - ms.fixed_expense - SPENT
+    assert.equal(dash.savings.actual, expected, `actual 应为 ${expected}`)
+    assert.equal(dash.savings.target, fixInput.savingsTarget)
+    // pct 需 clamp 到 100，避免超额储蓄时进度条宽度越界
+    const expectedPct = Math.min(100, Math.round((expected / ms.savings_target) * 100))
+    assert.equal(dash.savings.pct, expectedPct)
+    assert.ok(['green', 'yellow', 'red'].includes(dash.savings.color))
+  })
+
+  test('超支到负值 → actual 夹到 0，不出现负数储蓄', async () => {
+    const OPENID = 't7_s3_openid'
+    await bootstrapFamily(OPENID)
+    await dispatch({ action: 'plans.activate' }, makeCtx(OPENID))
+
+    const handlers = require('../uniapp/cloudfunctions/api/handlers')
+    const act = ok(await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID)))
+    const familyId = act.plan.family_id
+
+    const SPENT = 999999 // 远超收入
+    handlers._seedWeeklyEntry({
+      _id: 'seed_t7_s3',
+      family_id: familyId,
+      week_start: seedWeekStartInCurrentMonth(),
+      categories: { food: SPENT, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 },
+      total: SPENT,
+      submitted_by: OPENID,
+      created_at: Date.now(),
+    })
+
+    const dash = ok(await dispatch({ action: 'dashboard.get' }, makeCtx(OPENID)))
+    assert.equal(dash.savings.actual, 0, 'actual 不应为负')
+    assert.equal(dash.savings.pct, 0)
+    assert.ok(dash.savings.pct >= 0 && dash.savings.pct <= 100)
   })
 })

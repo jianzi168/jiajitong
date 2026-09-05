@@ -73,6 +73,7 @@ export async function ensureAndActivate(localPlan = null) {
 
 export const getActivePlan    = wrap('plans.getActive')
 export const activatePlan     = wrap('plans.activate')
+export const recalcPlan       = wrap('plans.recalc')
 export const getDashboard     = wrap('dashboard.get')
 export const getCurrentWeekly = wrap('weekly.getCurrent')
 export const submitWeekly     = wrap('weekly.submit')
