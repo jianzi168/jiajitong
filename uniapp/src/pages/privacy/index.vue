@@ -2,8 +2,9 @@
 import ScreenBody from '@/components/ScreenBody.vue'
 import { ref } from 'vue'
 import NavBar from '@/components/NavBar.vue'
-import { exportData, deleteAccount } from '@/services/api.js'
+import { exportData, deleteAccount, getActivePlan } from '@/services/api.js'
 import { toDateString } from '@/utils/datetime.js'
+import { exportReportPdf, PDF_CANVAS_CSS } from '@/utils/pdf.js'
 
 const loading = ref('')
 
@@ -99,22 +100,31 @@ async function onItem(item) {
   loading.value = item.key
   try {
     uni.showLoading({ title: '导出中...', mask: true })
-    const data = await exportData()
-    uni.hideLoading()
 
     if (item.key === 'csv') {
+      const data = await exportData()
+      uni.hideLoading()
       const csv = plansToCSV(data)
       const path = downloadJSON(null, `家计通数据_${toDateString()}.csv`)
       // overwrite with CSV content
       uni.getFileSystemManager().writeFileSync(path, '\uFEFF' + csv, 'utf8') // BOM for Excel
       uni.showToast({ title: 'CSV 已保存', icon: 'success' })
     } else {
-      // PDF 导出：当前以 JSON 格式保存
-      const path = downloadJSON(data, `家计通规划书_${toDateString()}.json`)
-      uni.showToast({ title: '规划书已保存', icon: 'success' })
+      // PDF：需要当前方案来绘制海报，再包装成真 PDF
+      const planRes = await getActivePlan()
+      const plan = planRes && planRes.plan
+      uni.hideLoading()
+      if (!plan) {
+        uni.showToast({ title: '还没有规划书可导出', icon: 'none' })
+        return
+      }
+      await exportReportPdf(plan)
+      uni.showToast({ title: 'PDF 已生成', icon: 'success' })
     }
   } catch (e) {
     uni.hideLoading()
+    // PDF 失败时明确告知，不再静默降级成「存图片」——
+    // 那会让用户以为自己拿到的就是 PDF
     uni.showToast({ title: e.userHint || '导出失败，请稍后重试', icon: 'none' })
   } finally {
     loading.value = ''
@@ -146,6 +156,17 @@ async function onItem(item) {
         <text>根据《个人信息保护法》，你有权导出和删除你的数据。</text>
       </view>
     </ScreenBody>
+
+    <!--
+      PDF 导出用的隐藏画布：微信 canvas 必须真实存在于页面才能绘制。
+      不能用 display:none（会导致画布空白），必须移出视口。
+      尺寸来自 pdf.js 的单一来源，与绘制参数保持一致。
+    -->
+    <canvas
+      canvas-id="reportPdfCanvas"
+      class="pdf-canvas"
+      :style="{ width: PDF_CANVAS_CSS.width + 'px', height: PDF_CANVAS_CSS.height + 'px' }"
+    />
   </view>
 </template>
 
@@ -155,5 +176,11 @@ async function onItem(item) {
   text-align: center;
   font-size: 24rpx;
   color: var(--color-text-secondary);
+}
+/* 移出视口而非 display:none：canvas 需真实渲染才能被绘制 */
+.pdf-canvas {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
 }
 </style>

@@ -15,12 +15,12 @@ const { test, describe, beforeEach } = require('node:test')
 const assert = require('node:assert/strict')
 
 const { dispatch } = require('../uniapp/cloudfunctions/api')
+const handlers = require('../uniapp/cloudfunctions/api/handlers')
 
 const TPL = 'TPL_TEST_WEEKLY'
 
 beforeEach(() => {
   try {
-    const handlers = require('../uniapp/cloudfunctions/api/handlers')
     if (handlers._resetMemory) handlers._resetMemory()
     // 配置周提醒模板（模拟小程序后台配置的模板 ID）
     if (handlers._seedAppConfig) handlers._seedAppConfig('subscribe_weekly_template_id', TPL)
@@ -76,6 +76,31 @@ describe('S-2 getStatus', () => {
     assert.equal(res.records.length, 1)
     assert.equal(res.records[0].template_id, TPL)
     assert.equal(res.records[0].quota, 1)
+  })
+
+  test('下发 template_id，前端无需硬编码（模板 ID 后端可配置）', async () => {
+    const OPENID = 's2b'
+    await bootstrap(OPENID)
+
+    const res = ok(await dispatch({ action: 'subscribe.getStatus', payload: {} }, makeCtx(OPENID)))
+    assert.equal(res.configured, true)
+    assert.equal(res.template_id, TPL, '已配置时应下发模板 ID')
+    assert.deepEqual(
+      [res.template_id], [TPL],
+      '前端将以此调用 requestSubscribeMessage'
+    )
+  })
+
+  test('未配置模板时 template_id 为空串且 configured 为 false', async () => {
+    const OPENID = 's2c'
+    await bootstrap(OPENID)
+    // 覆盖为空配置：模拟运维尚未申请模板
+    handlers._seedAppConfig('subscribe_weekly_template_id', '')
+
+    const res = ok(await dispatch({ action: 'subscribe.getStatus', payload: {} }, makeCtx(OPENID)))
+    assert.equal(res.configured, false)
+    assert.equal(res.template_id, '')
+    assert.deepEqual(res.records, [])
   })
 })
 

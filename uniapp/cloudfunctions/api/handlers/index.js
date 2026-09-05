@@ -324,6 +324,126 @@ async function plansRecalc(ctx, payload) {
   return ok({ plan: ensureRecommendations(merged), stale: false })
 }
 
+// ---------- families.getProfile / families.saveProfile ----------
+// 阶段取值与引擎同源（db 在本地测试路径下为 null，不能依赖它导出）
+const FAMILY_STAGES = Object.keys(engine.constants.STAGE_SHARE_MODIFIERS)
+
+/**
+ * 读取家庭档案。
+ *
+ * 家庭名 / 阶段 / 城市都从 families 集合读取（单一来源），
+ * 不再让前端各自 localStorage 兜底 —— 否则伴侣两端看到的名字不一致。
+ */
+async function familiesGetProfile(ctx) {
+  const authErr = requireAuth(ctx); if (authErr) return authErr
+
+  let user, family
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(ctx.openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    family = await db.getFamily(user.family_id)
+  } else {
+    user = memoryStore.users.get(ctx.openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    family = memoryStore.families.get(user.family_id) || null
+  }
+
+  if (!family) return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '家庭不存在')
+
+  return ok({
+    profile: {
+      name: family.name || '我的家',
+      stage: family.stage || 'newlywed',
+      city: family.city || '上海',
+      city_tier: family.city_tier || 'tier1',
+      city_estimated: !!family.city_estimated,
+      updated_at: family.updated_at || null,
+    },
+    stages: FAMILY_STAGES,
+  })
+}
+
+/**
+ * 保存家庭档案（owner 权限）。
+ *
+ * 历史实现里前端 onSave() 只弹了个 toast 并把 isDirty 置 false，
+ * 用户会以为保存成功 —— 典型的「看起来能点、点了没反应」。
+ */
+async function familiesSaveProfile(ctx, payload) {
+  const authErr = requireAuth(ctx); if (authErr) return authErr
+
+  let user
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(ctx.openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  } else {
+    user = memoryStore.users.get(ctx.openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  }
+  const ownerErr = requireOwner(user); if (ownerErr) return ownerErr
+
+  const { name, stage, city } = payload || {}
+  if (name === undefined && stage === undefined && city === undefined) {
+    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '没有需要保存的内容')
+  }
+
+  try {
+    if (usingCloudDb) {
+      await db.updateFamilyProfile(user.family_id, { name, stage, city })
+    } else {
+      const family = memoryStore.families.get(user.family_id)
+      if (!family) return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '家庭不存在')
+      const now_ = new Date()
+      if (name !== undefined) {
+        const trimmed = String(name == null ? '' : name).trim().slice(0, 40)
+        if (!trimmed) return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '家庭名不能为空')
+        family.name = trimmed
+      }
+      if (stage !== undefined) {
+        if (!FAMILY_STAGES.includes(stage)) {
+          return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '家庭阶段取值非法')
+        }
+        family.stage = stage
+      }
+      if (city !== undefined) {
+        const trimmed = String(city == null ? '' : city).trim()
+        if (!trimmed) return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '城市不能为空')
+        const benchmark = require('../common/benchmark-data')
+        const cityObj = benchmark.getCityByName(trimmed)
+        family.city = trimmed
+        family.city_tier = cityObj ? cityObj.tier : 'tier2'
+        family.city_estimated = !cityObj
+      }
+      family.updated_at = now_
+      memoryStore.families.set(user.family_id, family)
+    }
+  } catch (e) {
+    if (e && (e.code === 'EMPTY_FAMILY_NAME' || e.code === 'INVALID_STAGE' || e.code === 'EMPTY_CITY')) {
+      return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', {
+        EMPTY_FAMILY_NAME: '家庭名不能为空',
+        INVALID_STAGE: '家庭阶段取值非法',
+        EMPTY_CITY: '城市不能为空',
+      }[e.code])
+    }
+    throw e
+  }
+
+  const saved = usingCloudDb
+    ? await db.getFamily(user.family_id)
+    : memoryStore.families.get(user.family_id)
+
+  return ok({
+    profile: {
+      name: saved.name || '我的家',
+      stage: saved.stage || 'newlywed',
+      city: saved.city || '上海',
+      city_tier: saved.city_tier || 'tier1',
+      city_estimated: !!saved.city_estimated,
+      updated_at: saved.updated_at || null,
+    },
+  })
+}
+
 // ---------- helpers (Phase 7) ----------
 function colorOf(pct) {
   if (pct >= 90) return 'red'
@@ -1261,7 +1381,9 @@ async function subscribeGetStatus(ctx, payload) {
       if (v && v.openid === openid) records.push({ template_id: v.template_id, quota: v.quota, total: v.total, updated_at: v.updated_at })
     }
   }
-  return ok({ configured: !!configured, records })
+  // 同时下发模板 ID：前端 requestSubscribeMessage 需要它，
+  // 若继续让前端硬编码，运维配好 app_config 后仍需改代码重新发版才能生效。
+  return ok({ configured: !!configured, template_id: configured || '', records })
 }
 
 // subscribe.send: 主动推送一条给指定 openid（默认自己），成功后扣配额
@@ -1581,6 +1703,8 @@ module.exports = {
   'users.exportData': usersExportData,
   'users.deleteMe': usersDeleteMe,
   // Phase 10 伴侣邀请
+  'families.getProfile': familiesGetProfile,
+  'families.saveProfile': familiesSaveProfile,
   'families.inviteCreate': familiesInviteCreate,
   'families.inviteJoin': familiesInviteJoin,
   'families.getMembers': familiesGetMembers,

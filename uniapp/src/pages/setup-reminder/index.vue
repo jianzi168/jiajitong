@@ -7,10 +7,10 @@ import { isSubscribeConfigured, UNAVAILABLE_COPY } from '@/utils/featureAvailabi
 import { recordSubscribe, getSubscribeStatus } from '@/services/api'
 import { track, trackPage } from '@/utils/analytics'
 
-// Phase 10: 订阅消息推送（需在小程序后台申请订阅消息模板后填入真实 ID）
-// 未填入时按钮提示"暂未开放"，不影响其他功能。
-const WEEKLY_TMPL_ID = ''
-const tmplIds = WEEKLY_TMPL_ID ? [WEEKLY_TMPL_ID] : []
+// 订阅消息模板 ID 由**后端 app_config 下发**（subscribe_weekly_template_id），
+// 不再前端硬编码 —— 否则运维配好模板后仍需改代码重新发版才能生效。
+// 服务未配置时 configured 为 false，按钮提示「暂未开放」，不影响其他功能。
+const tmplIds = ref([])
 
 const subStatus = ref(null) // { configured, records: [{template_id, quota, total}] }
 const syncing = ref(false)
@@ -20,6 +20,8 @@ onMounted(async () => {
   try {
     const res = await getSubscribeStatus()
     subStatus.value = res
+    // 后端已配置模板时下发 ID；未配置则保持空数组，按钮走「暂未开放」分支
+    tmplIds.value = res && res.template_id ? [res.template_id] : []
   } catch (e) {
     // 云函数不可用时忽略
   }
@@ -32,7 +34,7 @@ const totalAccepted = () => {
 }
 
 async function onSubscribe() {
-  if (!isSubscribeConfigured(tmplIds)) {
+  if (!isSubscribeConfigured(tmplIds.value)) {
     uni.showToast({ title: UNAVAILABLE_COPY.subscribe, icon: 'none' })
     return
   }
@@ -42,7 +44,7 @@ async function onSubscribe() {
     return
   }
   uni.requestSubscribeMessage({
-    tmplIds,
+    tmplIds: tmplIds.value,
     success: async (res) => {
       const accepted = Object.values(res || {}).filter((v) => v === 'accept').length
       if (accepted === 0) {
@@ -52,7 +54,7 @@ async function onSubscribe() {
       // 上报授权记录（每授权一次获得一次推送配额）
       syncing.value = true
       try {
-        for (const id of tmplIds) {
+        for (const id of tmplIds.value) {
           if (res[id] === 'accept') await recordSubscribe({ template_id: id })
         }
         track('subscribe_accept', { count: accepted })

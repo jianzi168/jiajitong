@@ -74,8 +74,6 @@ function onGenerate() {
         <view class="kv-row kv-row-mini"><text>已储备</text><text class="kv-val">{{ format(wizard.currentBabyReserve) }}</text></view>
       </view>
 
-      <text class="hint-text hint-text-center">免费版每月可测 1 次，付费可无限</text>
-
       <button class="grad-btn" :disabled="!wizard.canSubmit" @tap="onGenerate">
         生成我们的家庭规划书
       </button>

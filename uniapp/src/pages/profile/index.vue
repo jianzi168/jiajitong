@@ -8,8 +8,8 @@ const { statusBarHeight, navBarHeight, capsuleReserveRight } = getCapsuleSafeAre
 const bannerBodyHeight = typeof uni.upx2px === 'function' ? uni.upx2px(28 + 112 + 40) : 90
 const headerPlaceholder = statusBarHeight + navBarHeight + bannerBodyHeight
 
-// 商业化已关闭（支付/订阅链路移除），权益全量开放，此处仅作说明文案
-const subscriptionLabel = 'Pro 功能全量开放'
+// 副标题显示家庭名，与首页保持同一来源（商业化已移除，不再展示会员/权益状态）
+const subscriptionLabel = uni.getStorageSync('nickname') || '我的家庭'
 
 const menus = [
   { label: '家庭档案', url: '/pages/family/index' },

@@ -12,7 +12,7 @@
 'use strict'
 
 const dateUtil = require('./date')
-const { ENGINE_VERSION } = require('./engine/constants')
+const { ENGINE_VERSION, STAGE_SHARE_MODIFIERS } = require('./engine/constants')
 
 function getDB() {
   // lazy require: 云函数环境有 wx-server-sdk，本地测试则抛错由 handler fallback
@@ -100,6 +100,52 @@ async function getFamily(familyId) {
   } catch (e) {
     return null
   }
+}
+
+// 家庭阶段取值白名单 —— 与引擎口径同源，避免前端传引擎不认识的值入库
+const FAMILY_STAGES = Object.keys(STAGE_SHARE_MODIFIERS)
+
+/**
+ * 更新家庭档案（家庭名 / 阶段 / 城市）
+ *
+ * 城市等级与「是否估算」一律在服务端由城市名推导，不信任客户端传值 ——
+ * 否则客户端可以写入与城市不匹配的 tier，污染测算基准。
+ *
+ * @throws {Error} EMPTY_FAMILY_NAME | INVALID_STAGE
+ */
+async function updateFamilyProfile(familyId, { name, stage, city } = {}) {
+  const db = getDB()
+  const update = { updated_at: now() }
+
+  if (name !== undefined) {
+    const trimmed = String(name == null ? '' : name).trim().slice(0, 40)
+    if (!trimmed) {
+      const e = new Error('EMPTY_FAMILY_NAME'); e.code = 'EMPTY_FAMILY_NAME'; throw e
+    }
+    update.name = trimmed
+  }
+
+  if (stage !== undefined) {
+    if (!FAMILY_STAGES.includes(stage)) {
+      const e = new Error('INVALID_STAGE'); e.code = 'INVALID_STAGE'; throw e
+    }
+    update.stage = stage
+  }
+
+  if (city !== undefined) {
+    const trimmed = String(city == null ? '' : city).trim()
+    if (!trimmed) {
+      const e = new Error('EMPTY_CITY'); e.code = 'EMPTY_CITY'; throw e
+    }
+    const benchmarkData = require('../benchmark-data')
+    const cityObj = benchmarkData.getCityByName(trimmed)
+    update.city = trimmed
+    update.city_tier = cityObj ? cityObj.tier : 'tier2'
+    update.city_estimated = !cityObj
+  }
+
+  await db.collection('families').doc(familyId).update({ data: update })
+  return { _id: familyId, ...update }
 }
 
 // ---------- financial_profiles ----------
@@ -766,6 +812,8 @@ module.exports = {
   updateUserLastActive,
   createFamily,
   getFamily,
+  updateFamilyProfile,
+  FAMILY_STAGES,
   createFinancialProfile,
   savePlan,
   getActivePlan,

@@ -94,6 +94,9 @@ export const exportData     = wrap('users.exportData')
 export const deleteAccount  = wrap('users.deleteMe')
 
 // Phase 10 伴侣邀请
+export const getFamilyProfile  = wrap('families.getProfile')
+export const saveFamilyProfile = wrap('families.saveProfile')
+
 export const createInvite    = wrap('families.inviteCreate')
 export const joinFamily      = wrap('families.inviteJoin')
 export const getFamilyMembers = wrap('families.getMembers')
