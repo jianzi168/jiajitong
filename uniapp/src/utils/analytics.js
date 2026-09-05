@@ -14,6 +14,7 @@
  */
 
 import { trackAnalytics } from '@/services/api'
+import { isCloudTemporarilyDown } from '@/services/cloud'
 
 const QUEUE_KEY = '__analytics_queue'
 const BATCH_SIZE = 10
@@ -43,6 +44,10 @@ function saveQueue() {
 
 function platform() {
   try {
+    // getSystemInfoSync 已废弃（DevTools 持续告警），优先用细分 API，旧基础库回退
+    if (typeof uni.getDeviceInfo === 'function') {
+      return (uni.getDeviceInfo().platform || 'unknown').toLowerCase()
+    }
     return (uni.getSystemInfoSync().platform || 'unknown').toLowerCase()
   } catch (e) {
     return 'unknown'
@@ -107,6 +112,9 @@ function maybeFlush() {
 /** 批量上报全部队列；成功清空，失败保留 */
 export async function flush() {
   if (flushing || queue.length === 0) return
+  // 云环境熔断期直接跳过：埋点属非关键调用，不应在环境故障时刷屏重试。
+  // 队列保留，云恢复后自动补发。
+  if (isCloudTemporarilyDown()) return
   flushing = true
   const batch = queue.slice()
   try {
