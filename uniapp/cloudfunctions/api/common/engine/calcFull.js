@@ -11,7 +11,7 @@ const errors = require('./errors')
 const calcHealthScore = require('./calcHealthScore')
 const calcBabyReserve = require('./calcBabyReserve')
 const { normalizeCategories, computeCategoryBase } = require('./normalize')
-const { STAGE_COEFFICIENTS, INCOME_COEFF_MIN, INCOME_COEFF_MAX } = require('./constants')
+const { INCOME_COEFF_MIN, INCOME_COEFF_MAX, ENGINE_VERSION } = require('./constants')
 const { evaluateRules } = require('./rules')
 
 function clamp(v, min, max) {
@@ -125,7 +125,12 @@ function calcFull(input) {
       city_estimated: cityInfo.city_estimated,
       income_stability: incomeStability,
       income_coefficient: incomeCoeff,
-      stage_coefficient: STAGE_COEFFICIENTS[stage] || 1.0,
+      // 记录实际生效的结构调节档位，便于核对与后续校准。
+      // 具体系数见 constants.STAGE_SHARE_MODIFIERS 与 benchmark-data/category-benchmarks。
+      share_modifiers: {
+        tier: cityInfo.city.tier,
+        stage,
+      },
     },
   }
   const recommendations = evaluateRules(builtPlan, {
@@ -140,6 +145,8 @@ function calcFull(input) {
   // 10. 组装
   return {
     plan_id: crypto.randomUUID(),
+    // 打上引擎版本，便于日后精确定位需要重算的存量方案
+    engine_version: ENGINE_VERSION,
     health_score: score,
     risk_level: riskLevel,
     monthly_summary: monthlySummary,
