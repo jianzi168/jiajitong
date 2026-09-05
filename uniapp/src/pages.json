@@ -141,6 +141,13 @@
       }
     },
     {
+      "path": "pages/privacy/pipl",
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
       "path": "pages/help/index",
       "style": {
         "navigationStyle": "custom",

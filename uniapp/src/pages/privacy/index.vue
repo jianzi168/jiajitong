@@ -51,6 +51,11 @@ function plansToCSV(data) {
   return lines.join('\n')
 }
 
+/** 页脚《个人信息保护法》入口：告知用户权利依据的全文 */
+function onPipl() {
+  uni.navigateTo({ url: '/pages/privacy/pipl' })
+}
+
 async function onItem(item) {
   if (loading.value) return
 
@@ -152,8 +157,9 @@ async function onItem(item) {
         </button>
       </view>
 
-      <view class="footer-note">
+      <view class="footer-note" @tap="onPipl">
         <text>根据《个人信息保护法》，你有权导出和删除你的数据。</text>
+        <text class="footer-link">查看《个人信息保护法》全文 ›</text>
       </view>
     </ScreenBody>
 
@@ -176,6 +182,11 @@ async function onItem(item) {
   text-align: center;
   font-size: 24rpx;
   color: var(--color-text-secondary);
+}
+.footer-link {
+  display: block;
+  margin-top: 12rpx;
+  color: var(--color-coral);
 }
 /* 移出视口而非 display:none：canvas 需真实渲染才能被绘制 */
 .pdf-canvas {
