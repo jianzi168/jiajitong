@@ -75,6 +75,7 @@ export const getActivePlan    = wrap('plans.getActive')
 export const listPlans        = wrap('plans.list')
 export const getPlanById      = wrap('plans.getById')
 export const activatePlan     = wrap('plans.activate')
+export const adjustPlan       = wrap('plans.adjust')
 export const recalcPlan       = wrap('plans.recalc')
 export const getDashboard     = wrap('dashboard.get')
 export const getCurrentWeekly = wrap('weekly.getCurrent')
@@ -125,6 +126,7 @@ export const submitFeedback = wrap('feedback.submit')
 export default {
   getActivePlan,
   activatePlan,
+  adjustPlan,
   ensureAndActivate,
   getDashboard,
   getCurrentWeekly,

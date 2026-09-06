@@ -320,6 +320,16 @@ async function recalcAndPersistPlan(planId) {
   return { ...plan, ...update }
 }
 
+/**
+ * 局部更新方案字段（adjust 等少量写入用）。
+ */
+async function updatePlanFields(planId, fields) {
+  if (!planId || !fields) return null
+  const db = getDB()
+  await db.collection('budget_plans').doc(planId).update({ data: fields })
+  return fields
+}
+
 // ---------- weekly_entries ----------
 async function getLastWeekEntry(familyId, beforeWeekStart) {
   const db = getDB()
@@ -910,6 +920,7 @@ module.exports = {
   listPlans,
   getPlanById,
   getActivePlan,
+  updatePlanFields,
   isPlanStale,
   computePlanUpdate,
   recalcAndPersistPlan,

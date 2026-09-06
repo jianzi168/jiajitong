@@ -811,6 +811,112 @@ function aggregateEntriesByMonth(entries) {
   return months
 }
 
+// ---------- plans.adjust（预算手动微调）----------
+/**
+ * 手动微调 7 类预算。
+ *
+ * 设计依据：PDD §15 风险应对「用户质疑基准数据 → 计算透明化 + 可手动微调」。
+ * 引擎给的基准是城市均值，真实家庭消费结构差异大，不能调会让人觉得
+ * 「工具不懂我」。
+ *
+ * 约束：
+ *  - 7 类齐全、非负整数
+ *  - 合计 ≤ 可支配（disposable）。不为零和强制 —— 合计变少意味着多储蓄，
+ *    这是用户的选择而非错误
+ *  - **规划变更属 owner 决策**：requireOwner。member 可记账（weekly.submit
+ *    已放开）但不动规划结构，两者性质不同
+ *  - 首次调整时把引擎原始值存进 base_categories，「恢复默认」据此还原；
+ *    recalc 会按引擎重算并自然覆盖调整
+ */
+async function plansAdjust(ctx, payload) {
+  const authErr = requireAuth(ctx); if (authErr) return authErr
+  const openid = ctx.openid
+
+  let user, plan
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    plan = await db.getActivePlan(user.family_id)
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    plan = findActivePlanLocal(user.family_id)
+  }
+  if (!plan) return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '未找到生效方案，请先生成')
+  const ownerErr = requireOwner(user); if (ownerErr) return ownerErr
+
+  // reset：恢复引擎默认
+  if (payload && payload.reset) {
+    const base = Array.isArray(plan.base_categories) ? plan.base_categories : null
+    if (!base) {
+      return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '当前已是引擎默认值')
+    }
+    const fields = {
+      categories: base,
+      base_categories: null,
+      adjusted_at: null,
+    }
+    if (usingCloudDb) {
+      await db.updatePlanFields(plan._id, fields)
+    } else {
+      Object.assign(plan, fields)
+      memoryStore.budget_plans.set(plan._id, plan)
+    }
+    return ok({ plan: ensureRecommendations({ ...plan, ...fields }) })
+  }
+
+  const requested = (payload && payload.categories) || null
+  if (!requested || typeof requested !== 'object') {
+    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '缺少 categories')
+  }
+
+  // 7 类齐全 + 非负整数
+  const adjusted = {}
+  for (const id of WEEKLY_CAT_IDS) {
+    const v = Number(requested[id])
+    if (!Number.isFinite(v) || v < 0) {
+      return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', `类目 ${id} 金额无效`)
+    }
+    adjusted[id] = Math.round(v)
+  }
+
+  // 合计不得超过可支配
+  const disposable = Number((plan.monthly_summary && plan.monthly_summary.disposable) || 0)
+  const sum = Object.values(adjusted).reduce((s, v) => s + v, 0)
+  if (disposable > 0 && sum > disposable) {
+    return fail(
+      ERROR_CODE.VALIDATION_ERROR,
+      'VALIDATION_ERROR',
+      `合计 ¥${sum} 超出可支配 ¥${disposable}`
+    )
+  }
+
+  // 首次调整时保存引擎原始值，供「恢复默认」还原
+  const baseCategories = Array.isArray(plan.base_categories) && plan.base_categories.length
+    ? plan.base_categories
+    : (plan.categories || [])
+
+  const newCategories = (plan.categories || []).map((c) => ({
+    ...c,
+    suggested: adjusted[c.id] != null ? adjusted[c.id] : c.suggested,
+  }))
+
+  const fields = {
+    categories: newCategories,
+    base_categories: baseCategories,
+    adjusted_at: Date.now(),
+  }
+
+  if (usingCloudDb) {
+    await db.updatePlanFields(plan._id, fields)
+  } else {
+    Object.assign(plan, fields)
+    memoryStore.budget_plans.set(plan._id, plan)
+  }
+
+  return ok({ plan: ensureRecommendations({ ...plan, ...fields }) })
+}
+
 // ---------- reviews.getTrend（多月趋势）----------
 /**
  * 多月行为趋势。
@@ -2032,6 +2138,7 @@ module.exports = {
   'plans.recalc': plansRecalc,
   'plans.list': plansList,
   'plans.getById': plansGetById,
+  'plans.adjust': plansAdjust,
   'dashboard.get': dashboardGet,
   'weekly.getCurrent': weeklyGetCurrent,
   'weekly.submit': weeklySubmit,
