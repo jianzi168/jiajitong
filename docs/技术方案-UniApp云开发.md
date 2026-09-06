@@ -562,32 +562,44 @@ export async function callApi(action, payload = {}, options = {}) {
 
 ### 5.2 api 网关路由表
 
-| action | 鉴权 | 说明 |
-|--------|------|------|
-| `cities.list` | 否 | 开放城市列表 |
-| `calc.quick` | 否* | 快测；*需 openid 限流 |
-| `calc.full` | 否* | 完整测算 |
-| `user.bootstrap` | 是 | 登录初始化，返回 user+family+activePlan |
-| `user.updateProfile` | owner | 更新昵称等 |
-| `family.update` | owner | 更新 stage/city/plan_date |
-| `profile.updateFinancial` | owner | 更新财务档案 |
-| `plan.save` | owner | 保存测算结果为新 plan |
-| `plan.getActive` | member | 当前生效方案 |
-| `plan.getById` | member | 指定 plan 详情 |
-| `plan.activate` | owner | 启用预算追踪 |
-| `plan.list` | member | 历史版本（Pro） |
-| `dashboard.get` | member | 看板聚合数据 |
-| `weekly.submit` | member | 提交/更新本周填报 |
-| `weekly.getCurrent` | member | 本周是否已填 |
-| `weekly.copyLastWeek` | member | 复制上周数据 |
-| `recommendation.update` | member | 采纳/稍后/忽略 |
-| `subscription.get` | 是 | 当前权益 |
-| `order.create` | owner | 创建支付订单 |
-| `partner.createInvite` | owner | 生成邀请 |
-| `partner.acceptInvite` | 是 | 伴侣接受邀请 |
-| `account.delete` | owner | 删除账号与家庭数据 |
-| `track.batch` | 否 | 埋点批量写入 |
-| `report.monthly` | member | 月末复盘（P1） |
+> **命名说明（2026-09-07 更新）**：实现采用复数资源前缀 `plans.* / families.* / users.* /
+> actions.* / analytics.* / reviews.* / share.* / subscribe.* / feedback.*`，
+> 与下表早期单数命名（`plan.* / user.* / family.*`）不同但功能一一对齐。
+> 实际 action 清单以 `cloudfunctions/api/handlers/index.js` 的 `module.exports` 为准，见下表「实际 action」列。
+
+| action（早期设计） | 实际 action | 鉴权 | 说明 |
+|--------|--------|------|------|
+| `cities.list` | `cities.list` | 否 | 开放城市列表 |
+| `calc.quick` | `calc.quick` | 否* | 快测；*限流（每 openid 每分钟 ≤10 次） |
+| `calc.full` | `calc.full` | 否* | 完整测算；*同上限流 |
+| `user.bootstrap` | `user.bootstrap` | 是 | 登录初始化，返回 user+family+activePlan |
+| `user.updateProfile` | `families.saveProfile` | owner | 更新昵称/档案 |
+| `family.update` | `families.saveProfile` | owner | 更新 stage/city/plan_date |
+| `profile.updateFinancial` | `families.saveProfile` | owner | 更新财务档案（并入 saveProfile） |
+| `plan.save` | `plans.save` | owner | 保存测算结果为新 plan |
+| `plan.getActive` | `plans.getActive` | member | 当前生效方案 |
+| `plan.getById` | `plans.getById` | member | 指定 plan 详情 |
+| `plan.activate` | `plans.activate` | owner | 启用预算追踪 |
+| `plan.list` | `plans.list` | member | 历史版本 |
+| `dashboard.get` | `dashboard.get` | member | 看板聚合数据 |
+| `weekly.submit` | `weekly.submit` | member | 提交/更新本周填报（含超支预警触发） |
+| `weekly.getCurrent` | `weekly.getCurrent` | member | 本周是否已填 |
+| `weekly.copyLastWeek` | `weekly.copyLastWeek` | member | 复制上周数据 |
+| `recommendation.update` | `actions.saveStatus` / `actions.getStatus` | member | 采纳/稍后/忽略 |
+| ~~`subscription.get`~~ | — | — | 商业化移除 |
+| ~~`order.create`~~ | — | — | 商业化移除 |
+| `partner.createInvite` | `families.inviteCreate` | owner | 生成邀请 |
+| `partner.acceptInvite` | `families.inviteJoin` | 是 | 伴侣接受邀请 |
+| `account.delete` | `users.deleteMe` | owner | 删除账号与家庭数据 |
+| `track.batch` | `analytics.track` | 否 | 埋点批量写入 |
+| `report.monthly` | `reviews.getMonthly` / `reviews.getTrend` | member | 月末复盘（实时聚合，非月初快照） |
+| — | `plans.adjust` | owner | 预算手动微调（PDD §15） |
+| — | `plans.recalc` | owner | 引擎重算存量方案 |
+| — | `families.getMembers` / `getProfile` | member | 家庭成员/档案读取 |
+| — | `share.getQrCode` | 是 | 分享小程序码 |
+| — | `subscribe.record` / `getStatus` / `send` / `remindWeekly` | 是 | 订阅消息 |
+| — | `feedback.submit` | 否 | 帮助与反馈（含限流） |
+| — | `users.exportData` | owner | 数据导出（PIPL 查阅复制权） |
 
 ### 5.3 统一响应格式
 
@@ -672,12 +684,19 @@ async function requireFamilyMember(openid, familyId) {
 }
 ```
 
-### 5.7 限流（common/rateLimit.js）
+### 5.7 限流（handlers 内 checkCalcRateLimit）
+
+> **已实现（2026-09-07）**：`calc.quick / calc.full` 每 openid 每分钟 ≤10 次，
+> 采用进程内令牌桶（与 `feedback.submit` 同款），位于 `handlers/index.js` 的
+> `checkCalcRateLimit`。云函数实例冷启动/扩容会重置计数器，属「尽力而为」限流，
+> 对 MVP 防脚本刷量足够；若要强一致限流再引入独立 `rate_limits` 集合（TTL 1 分钟）。
+>
+> 注：原「common/rateLimit.js」文件未单独建立，逻辑直接内联在 handlers 中。
 
 ```javascript
 // calc.quick / calc.full：每 openid 每分钟最多 10 次
-// 如启用限流，使用独立 rate_limits 集合（TTL 1 分钟），
-// 不要用 calc_sessions（该集合已移除）
+// openid 缺失时退化为按 IP（ctx.CLIENTIP）；两者都无则 'anon'
+// 超出返回 RATE_LIMITED(42901)
 ```
 
 ---
@@ -698,8 +717,8 @@ async function requireFamilyMember(openid, familyId) {
 | P-05 | wizard-3, wizard-3-warn | `subpackages/wizard/step3` | 向导 | 固定支出（含占比预警） |
 | P-06 | wizard-4 | `subpackages/wizard/step4` | 向导 | 储蓄与备育储备 |
 | P-07 | wizard-5, wizard-loading | `subpackages/wizard/step5` | 向导 | 汇总与生成 |
-| P-08 | report | `subpackages/report/preview` | 报告 | 规划书预览（免费+付费分级） |
-| P-09 | report-full | `subpackages/report/full` | 报告 | 完整规划书（付费解锁） |
+| P-08 | report | `subpackages/report/preview` | 报告 | 规划书预览（全量开放，无付费分级） |
+| P-09 | report-full | `subpackages/report/full` | 报告 | 完整规划书（全量开放） |
 | P-10 | share | `subpackages/report/share` | 报告 | 分享长图 |
 | — | home | `pages/home/index` | Tab | 首页 Bento |
 | P-11 | dashboard | `pages/dashboard/index` | Tab | 预算看板 |
@@ -707,7 +726,7 @@ async function requireFamilyMember(openid, familyId) {
 | P-12 | weekly | `pages/weekly/index` | 追踪 | 周度填报 |
 | P-13 | actions | `pages/actions/index` | 追踪 | 行动清单 |
 | P-15 | review | `pages/review/index` | 追踪 | 月末复盘（P1） |
-| P-16 | paywall | `pages/paywall/index` | 增长 | 付费墙 |
+| ~~P-16~~ | ~~paywall~~ | — | — | **已取消**：商业化不做，付费墙页面不存在 |
 | P-14 | partner | `pages/partner/index` | 增长 | 伴侣邀请（P1） |
 | — | setup-reminder | `pages/setup-reminder/index` | 增长 | 订阅消息授权（P1，§6.12） |
 | — | family-profile | `pages/family/index` | 设置 | 家庭档案 |
@@ -1137,9 +1156,9 @@ callApi('partner.acceptInvite', { code })
 | 任务 | cron | 逻辑 |
 |------|------|------|
 | 周度提醒 | `0 0 20 * * SUN` | 查 active plan 家庭 → 发「填报提醒」（已实现，见 `config.json` 的 `weeklyRemindTimer`） |
-| 超支预警 | 实时队列 | weekly.submit 写入 notify_queue，cron 每 5 分钟消费（未实现） |
+| 超支预警 | 实时 | weekly.submit 提交后即时计算各类执行率，≥80% 触发订阅消息推送（已实现于 `weeklySubmit` 的 `maybeSendOverspendAlert`）；**需先在小程序后台配置订阅消息模板 ID** |
 | ~~清理 session~~ | — | 已移除：`calc_sessions` 不再存在，无需 TTL 清理 |
-| 月末复盘 | `0 0 1 * *` | 生成 report.monthly 快照（未实现；当前 `reviews.getMonthly` 为实时聚合） |
+| 月末复盘 | — | 未做月初快照；当前 `reviews.getMonthly` 为实时聚合（无需 cron，按需计算） |
 
 **前置**：用户在 `setup-reminder` 页 `uni.requestSubscribeMessage` 授权模板 ID。
 
@@ -1247,9 +1266,19 @@ const { calcQuick, calcFull, calcHealthScore, calcBabyReserve } =
 
 ## 九、加密与隐私
 
-### 9.1 字段加密（common/crypto.js）
+### 9.1 字段加密（**已决定不做**，本节保留仅备查）
+
+> **2026-09-06 决策**：应用层字段级加密**不实现**，改为依赖既有控制 + 数据最小化。
+> 完整理由见 [开发计划 §2.5](开发计划.md#25-关于敏感字段加密存储的决策2026-09-06)，要点：
+> 1. 全部集合权限「自定义安全规则 全 false」，客户端无法直连，读写均经云函数鉴权；
+> 2. 密钥只能放云函数环境变量，能访问控制台者同样能读到 → 锁与钥匙放一起，增益有限；
+> 3. 应用层加密使 `plan_input` 不可读，密钥丢失即不可逆损坏，而它是 `plans.recalc` 的必要输入。
+>
+> 替代措施已实施：被新版取代的旧方案不再保留 `plan_input`（`stripPlanInputFromSuperseded`）。
+> 若日后合规要求提升再按 KMS + 信封加密重做。
 
 ```javascript
+// 原设计（未采用）：
 const ALGO = 'aes-256-gcm'
 // 密钥：云函数环境变量 INCOME_ENCRYPT_KEY（32 字节 hex）
 function encryptIncome(plain) { /* 返回 base64 iv+tag+cipher */ }
@@ -1281,12 +1310,10 @@ orders / subscriptions（商业化移除），均已不存在。
 
 - [ ] 微信小程序注册 + 云开发开通（按量计费）
 - [ ] 创建 dev/stg/prod 三个 env
-- [ ] 上传并部署 `api`、`payNotify`、`cronJobs`
-- [ ] 配置环境变量：`INCOME_ENCRYPT_KEY`、`CLOUD_ENV`
+- [ ] 上传并部署 `api`（`payNotify`/`cronJobs` 已不适用：支付随商业化取消，定时任务由 `api` 的 `weeklyRemindTimer` 触发器承载）
 - [ ] 创建数据库集合 + 索引（控制台或 init 云函数）
 - [ ] 安全规则全部 `false/false`
-- [ ] 微信支付商户号 + 云开发支付配置
-- [ ] 订阅消息模板申请（2–3 个）
+- [ ] 订阅消息模板申请并配置 `subscribe_weekly_template_id`
 - [ ] UniApp 发行 → 微信开发者工具上传体验版
 
 ### 10.2 发版流程

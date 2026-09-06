@@ -1,6 +1,6 @@
 <script setup>
 import ScreenBody from '@/components/ScreenBody.vue'
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import NavBar from '@/components/NavBar.vue'
 import { getMonthlyReview, getMonthlyTrend } from '@/services/api'
@@ -250,7 +250,7 @@ function onFullReport() {
           </view>
         </view>
         <view v-else class="review-none glass-card">
-          <text>本月无结余分类</text>
+          <text>{{ emptyMonthLabel }}无结余分类</text>
         </view>
 
         <view class="glass-card glass-card-tip" style="margin-top: 24rpx;">

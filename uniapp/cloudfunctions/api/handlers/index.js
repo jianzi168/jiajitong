@@ -44,6 +44,38 @@ function requireOwner(user) {
   return null
 }
 
+// ============================================================
+// 通用进程内限流（技术方案 §5.7 / §6.2）
+// ============================================================
+//
+// calc.quick / calc.full 是免登录接口，是刷量/滥用最直接的入口，
+// 技术方案要求「每 openid 每分钟 ≤10 次」。这里用进程内令牌桶
+// （与 feedback.submit 同款），避免额外 DB 读写与 TTL 清理负担。
+//
+// 注意：云函数实例冷启动/扩容会重置计数器，属于「尽力而为」限流，
+// 对 MVP 防脚本刷量足够；若要强一致限流需独立 rate_limits 集合（TTL 1 分钟）。
+
+const calcRateBuckets = new Map() // key -> 时间戳数组
+const CALC_RATE_WINDOW_MS = 60 * 1000
+const CALC_RATE_MAX = 10
+
+/**
+ * 检查 key 是否超出窗口内允许次数。
+ * @param {string} key - 限流维度（openid 或 IP 兜底）
+ * @returns {boolean} true=放行, false=超限
+ */
+function checkCalcRateLimit(key) {
+  const now = Date.now()
+  const list = (calcRateBuckets.get(key) || []).filter((t) => now - t < CALC_RATE_WINDOW_MS)
+  if (list.length >= CALC_RATE_MAX) {
+    calcRateBuckets.set(key, list)
+    return false
+  }
+  list.push(now)
+  calcRateBuckets.set(key, list)
+  return true
+}
+
 // 检查 wx-server-sdk 是否可用（云函数环境）；否则走本地内存（单测）
 let usingCloudDb = false
 let cloud = null
@@ -94,6 +126,11 @@ async function citiesList(ctx, payload) {
 
 // ---------- calc.quick ----------
 async function calcQuick(ctx, payload) {
+  // 限流：免登录接口，按 openid（无 openid 时按 IP）每分钟 ≤10 次
+  const rateKey = (ctx && (ctx.openid || ctx.CLIENTIP)) || 'anon'
+  if (!checkCalcRateLimit(rateKey)) {
+    return fail(ERROR_CODE.RATE_LIMITED, 'RATE_LIMITED', '操作太频繁，请稍后再试')
+  }
   const { city, income, housing } = payload || {}
   if (!city || typeof income !== 'number' || typeof housing !== 'number') {
     return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '缺少 city/income/housing 字段')
@@ -114,6 +151,11 @@ async function calcQuick(ctx, payload) {
 
 // ---------- calc.full ----------
 async function calcFull(ctx, payload) {
+  // 限流：免登录接口，按 openid（无 openid 时按 IP）每分钟 ≤10 次
+  const rateKey = (ctx && (ctx.openid || ctx.CLIENTIP)) || 'anon'
+  if (!checkCalcRateLimit(rateKey)) {
+    return fail(ERROR_CODE.RATE_LIMITED, 'RATE_LIMITED', '操作太频繁，请稍后再试')
+  }
   const v = payload || {}
   if (!v.city || typeof v.monthlyIncome !== 'number') {
     return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '缺少 city/monthlyIncome 字段')
@@ -1249,10 +1291,92 @@ async function weeklySubmit(ctx, payload) {
     }
   }
 
-  return ok({ entry })
+  // 提交成功后触发超支预警（静默，不影响记账返回）
+  const overspend = await maybeSendOverspendAlert(user.family_id, openid)
+
+  return ok({ entry, overspend: overspend.length ? overspend : undefined })
 }
 
-// ---------- weekly.copyLastWeek (Phase 7) ----------
+/**
+ * 超支预警（技术方案 §6.7 / §6.12，此前订阅推送链路是断的）。
+ *
+ * 口径与看板一致：某类「本月已用 / suggested ≥ 80%」即超支。
+ * 复用 accumulateEntriesByDayShare 的跨月按天分摊，保证与 dashboard/review
+ * 算出的执行率完全一致，不会出现「看板显示 78% 但推送说超支」的自相矛盾。
+ *
+ * 触发时机：weekly.submit 提交后。用户刚填完账，是最贴近「刚超支」的时刻。
+ * 仅推送给当前填报人自己（openid），且只在模板已配置、用户有剩余配额时发送；
+ * 任一条件不满足则静默跳过，**绝不让预警影响记账主流程的成功返回**。
+ *
+ * @param {string} familyId
+ * @param {string} openid - 当前填报人
+ * @returns {Promise<Array>} 超支类目列表（供测试断言与返回透出）
+ */
+async function maybeSendOverspendAlert(familyId, openid) {
+  const now = new Date()
+  const { year, month } = dateUtil.monthRange(now)
+
+  let plan, monthEntries
+  if (usingCloudDb) {
+    plan = await db.getActivePlan(familyId)
+    monthEntries = await db.getMonthOverlappingEntries(familyId, year, month)
+  } else {
+    plan = findActivePlanLocal(familyId)
+    monthEntries = findMonthlyEntriesLocal(familyId, year, month)
+  }
+  // 未启用追踪（无 active plan）或未激活 → 没有预算基线，无法判断超支
+  if (!plan || !plan.categories || !plan.activated_at) return []
+
+  const usedByCat = accumulateEntriesByDayShare(monthEntries, year, month)
+
+  const overspend = []
+  for (const c of plan.categories) {
+    if (!c || !c.suggested || c.suggested <= 0) continue
+    const pct = (usedByCat[c.id] || 0) / c.suggested
+    if (pct >= 0.8) overspend.push({ id: c.id, name: c.name, pct: Math.min(100, Math.round(pct * 100)) })
+  }
+  if (!overspend.length) return []
+
+  // 模板未配置 → 订阅推送不可用，静默跳过（应用内预警仍由 dashboard 兜底）
+  const templateId = await getWeeklyTemplateId()
+  if (!templateId) return overspend
+
+  // 仅当填报人自己订阅且还有配额时推送；配额不足/未订阅也静默跳过
+  try {
+    let quotaOk = false
+    if (usingCloudDb) {
+      const rec = await db.getSubscribeRecord(openid, templateId)
+      if (rec && (rec.quota || 0) > 0) quotaOk = true
+    } else {
+      const m = memoryStore.subscribe_records || new Map()
+      const rec = m.get(`${openid}_${templateId}`)
+      if (rec && rec.quota > 0) quotaOk = true
+    }
+    if (!quotaOk) return overspend
+
+    const top = overspend[0]
+    const thingValue = overspend.map((o) => `${o.name} ${o.pct}%`).join('、')
+    await sendSubscribeMessage({
+      openid,
+      templateId,
+      page: 'pages/dashboard/index',
+      data: {
+        thing1: { value: thingValue.slice(0, 20) },
+        phrase2: { value: '本月预算使用已超 80%' },
+      },
+    })
+    if (usingCloudDb) await db.decrementSubscribeQuota(openid, templateId)
+    else {
+      const m = memoryStore.subscribe_records || new Map()
+      const rec = m.get(`${openid}_${templateId}`)
+      if (rec) rec.quota -= 1
+    }
+  } catch (e) {
+    // 推送失败绝不阻断记账成功返回
+    console.error('[weekly.submit] overspend alert send failed:', e && (e.errMsg || e.message))
+  }
+  return overspend
+}
 async function weeklyCopyLastWeek(ctx, payload) {
   const authErr = requireAuth(ctx); if (authErr) return authErr
   const openid = ctx.openid
@@ -2185,6 +2309,7 @@ module.exports = {
     memoryStore.analytics_events.clear()
     memoryStore.feedbacks.clear()
     feedbackRateBuckets.clear()
+    calcRateBuckets.clear()
   },
   _seedWeeklyEntry(entry) {
     const id = entry._id || `seed_w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
