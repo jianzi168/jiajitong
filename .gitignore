@@ -24,6 +24,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Brainstorming visual companion
+.superpowers/
+
 # 临时与本地配置
 .env
 .env.local
@@ -32,6 +35,10 @@ pnpm-debug.log*
 .cache/
 .tmp/
 temp/
+
+# 本地会话产物（不入库）
+.workbuddy/
+:memory:.ses
 
 # 测试覆盖
 coverage/

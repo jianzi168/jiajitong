@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { computed, onMounted } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import { useWizardStore } from '@/stores/wizard'
@@ -63,7 +64,7 @@ function onNext() {
       <view class="seg"></view>
     </view>
 
-    <view class="screen-body screen-body-scroll">
+    <ScreenBody class="screen-body-scroll">
       <text class="field-heading">每月储蓄目标</text>
       <view class="field-block money-field">
         <text>¥</text>
@@ -136,7 +137,7 @@ function onNext() {
       </template>
 
       <button class="grad-btn" @tap="onNext">下一步</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 

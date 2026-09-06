@@ -7,15 +7,27 @@
 .screen {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
+/* 顶栏下方滚动区：高度由 flex 约束，避免整页滚动条穿过自定义导航 */
 .screen-body {
   flex: 1;
-  padding: 0 40rpx 48rpx;
+  height: 0;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
-.screen-body-center {
+/* 内边距必须在 scroll-view 内部节点上，才能计入可滚动高度 */
+.screen-body-inner {
+  padding: 0 40rpx 48rpx;
+  box-sizing: border-box;
+  min-height: 100%;
+}
+
+.screen-body-center .screen-body-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -24,8 +36,8 @@
   padding-bottom: 64rpx;
 }
 
-.screen-body-scroll { padding-bottom: 48rpx; }
-.screen-body-tab { padding-bottom: 176rpx; }
+.screen-body-scroll .screen-body-inner { padding-bottom: 48rpx; }
+/* Tab 页底部留白改由 ScreenBody tab 占位节点处理 */
 
 /* ===== 顶部栏 ===== */
 .screen-header {
@@ -45,6 +57,26 @@
 .screen-header-simple { padding: 32rpx 40rpx; background: transparent; border: none; }
 .page-title { font-size: 40rpx; font-weight: 700; letter-spacing: -0.02em; }
 .header-caption { font-size: 24rpx; font-weight: 500; color: var(--color-text-3); }
+
+/* Tab 页顶部标题栏：固定不随页面滚动 */
+.simple-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 40rpx;
+  box-sizing: border-box;
+  background: rgba(250, 248, 245, 0.92);
+  backdrop-filter: blur(16rpx);
+}
+.simple-header-placeholder {
+  width: 100%;
+  flex-shrink: 0;
+}
 
 .nav-back, .nav-action {
   width: 80rpx; height: 80rpx; border: none; border-radius: 50%;
@@ -149,10 +181,11 @@
 .track-fill-danger { background: linear-gradient(90deg, #F87171, #EF4444); }
 .track-fill-ok { background: linear-gradient(90deg, var(--color-mint), #34D399); }
 
-/* ===== 落地页 hero ===== */
-.hero-landing { padding: 160rpx 48rpx 64rpx; text-align: center; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
+/* ===== 落地页 hero（对齐 prototype-v2 components.css：padding 28px 24px 32px；内容垂直居中避免贴顶）===== */
+.hero-landing { padding: 140rpx 48rpx 64rpx; text-align: center; min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
 .hero-graphic { display: block; width: 280rpx; height: 280rpx; margin: 0 auto 16rpx; }
-.hero-title { display: block; font-size: 52rpx; font-weight: 700; line-height: 1.25; letter-spacing: -0.02em; margin-bottom: 20rpx; white-space: pre-line; }
+.hero-title { display: block; font-size: 52rpx; font-weight: 700; line-height: 1.3; letter-spacing: -0.02em; margin-bottom: 20rpx; }
+.hero-title-line { display: block; }
 .hero-sub { display: block; font-size: 30rpx; color: var(--color-text-2); line-height: 1.55; margin-bottom: 56rpx; }
 .trust-strip { display: block; font-size: 22rpx; color: var(--color-text-3); margin-top: 40rpx; }
 .social-note { display: block; font-size: 26rpx; color: var(--color-text-2); margin-top: 24rpx; }
@@ -260,7 +293,7 @@
 }
 
 /* ===== loading ===== */
-.loading-screen { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 64rpx; }
+.loading-screen { height: 100%; min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 64rpx; box-sizing: border-box; }
 .loading-spinner {
   width: 112rpx; height: 112rpx; border: 8rpx solid rgba(255,107,138,0.15);
   border-top-color: var(--color-coral); border-radius: 50%;
@@ -273,7 +306,7 @@
 .loading-step.active { color: var(--color-coral); font-weight: 600; }
 
 /* ===== 登录 ===== */
-.login-panel { padding-top: 80rpx; }
+.login-panel .screen-body-inner { padding-top: 80rpx; }
 .brand-mark { display: block; font-size: 64rpx; font-weight: 700; margin-bottom: 32rpx; }
 .login-copy { display: block; font-size: 30rpx; color: var(--color-text-2); line-height: 1.6; margin-bottom: 64rpx; white-space: pre-line; }
 .grad-btn-wechat { background: #07C160; box-shadow: 0 16rpx 48rpx rgba(7, 193, 96, 0.28); max-width: 560rpx; }
@@ -368,15 +401,6 @@
 .week-total { text-align: center; margin: 40rpx 0 16rpx; font-size: 30rpx; }
 .week-total .wt-val { color: var(--color-coral); font-size: 36rpx; font-weight: 700; }
 
-/* ===== 付费 ===== */
-.price-card { position: relative; }
-.price-card-featured { border: 4rpx solid var(--color-coral); background: linear-gradient(180deg, #FFF5F7, #fff); }
-.price-badge { position: absolute; top: 28rpx; right: 28rpx; padding: 8rpx 20rpx; border-radius: 999rpx; font-size: 22rpx; font-weight: 700; background: var(--grad-btn); color: #fff; }
-.price-hero { font-size: 72rpx; font-weight: 700; color: var(--color-coral); margin: 16rpx 0; }
-.price-hero .unit { font-size: 28rpx; font-weight: 400; color: var(--color-text-2); }
-.check-list { margin: 24rpx 0 32rpx; font-size: 28rpx; color: var(--color-text-2); }
-.check-list .li { padding: 8rpx 0 8rpx 36rpx; position: relative; }
-
 /* ===== 我的 ===== */
 .profile-banner { display: flex; gap: 28rpx; align-items: center; padding: 56rpx 40rpx 40rpx; }
 .avatar-circle { width: 112rpx; height: 112rpx; border-radius: 36rpx; background: var(--grad-hero); color: #fff; font-size: 44rpx; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 8rpx 32rpx rgba(255, 107, 138, 0.3); flex-shrink: 0; }
@@ -389,7 +413,7 @@
 .text-muted { color: var(--color-text-3); font-weight: 400; }
 
 /* ===== 空态 / 提示 ===== */
-.empty-state { justify-content: center; padding-top: 80rpx; }
+.empty-state .screen-body-inner { justify-content: center; padding-top: 80rpx; }
 .empty-graphic { display: block; margin-bottom: 40rpx; }
 .alert-banner { padding: 28rpx 32rpx; border-radius: var(--radius-md); font-size: 28rpx; line-height: 1.5; margin-bottom: 32rpx; background: rgba(168, 85, 247, 0.1); border: 1rpx solid rgba(168, 85, 247, 0.2); color: #6B21A8; }
 

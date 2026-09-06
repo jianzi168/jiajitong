@@ -21,10 +21,21 @@ const ERROR_CODE = {
   FORBIDDEN:          40301,
   NOT_FOUND:          40401,
   RATE_LIMITED:       42901,
+  // Phase 10: 伴侣邀请
+  INVITE_EXPIRED:      41001,
+  INVITE_ALREADY_USED: 41002,
+  INVITE_NOT_FOUND:    41003,
+  ALREADY_MEMBER:      41004,
+  CANNOT_JOIN_OWN:     41005,
+  FAMILY_ALREADY_PAIRED: 41008, // 家庭已有伴侣，不能再生成邀请码
+  // Phase 10: 订阅消息
+  SUBSCRIBE_NOT_CONFIGURED: 41006, // 模板 ID 未配置（小程序后台申请后填入）
+  SUBSCRIBE_QUOTA_EXHAUSTED: 41007, // 订阅配额耗尽（一次授权一次推送）
 
   // 系统错误 (5xxxx)
   INTERNAL_ERROR:     50001,
   ENGINE_ERROR:       50002,
+  QR_CODE_FAILED:     50012, // Phase 8: 小程序码生成失败
 }
 
 function ok(data) {

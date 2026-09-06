@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 
@@ -13,7 +14,7 @@ function onContinue() {
   <view class="screen">
     <NavBar title="选择城市" />
 
-    <view class="screen-body">
+    <ScreenBody>
       <view class="field-block select-field">
         <text>{{ city }}</text>
         <text class="chev">▼</text>
@@ -24,6 +25,6 @@ function onContinue() {
       </view>
 
       <button class="grad-btn" @tap="onContinue">继续测算</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>

@@ -3,7 +3,7 @@
  *
  * 1. 创建集合（全部安全规则 read: false, write: false）：
  *    users, families, family_members, financial_profiles, budget_plans,
- *    weekly_entries, subscriptions, orders, recommendation_status,
+ *    weekly_entries, recommendation_status,
  *    family_invites, calc_sessions, analytics_events, app_config
  *
  * 2. 创建索引（云开发控制台 → 数据库 → 索引）：

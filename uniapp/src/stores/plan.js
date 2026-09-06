@@ -25,6 +25,12 @@ export const usePlanStore = defineStore('plan', {
     babyReserve: (s) => (s.activePlan && s.activePlan.baby_reserve) || null,
     recommendations: (s) =>
       (s.activePlan && s.activePlan.recommendations) || [],
+    /**
+     * 本月储蓄进度（来自 dashboard.get）。
+     * 未启用追踪时 actual 为 null —— 前端必须区分「0 元」与「无数据」，
+     * 否则会把全部可支配收入谎报成已储蓄。
+     */
+    savings: (s) => (s.dashboard && s.dashboard.savings) || null,
   },
   actions: {
     async loadActive() {
@@ -45,12 +51,16 @@ export const usePlanStore = defineStore('plan', {
 
     /** @param {object|null} localPlan 报告页本地方案；无云端 plan 时会先 save */
     async activate(localPlan = null) {
+      if (this.loading) return this.activePlan
       this.loading = true
       this.error = null
       try {
         const res = await ensureAndActivate(localPlan || this.activePlan)
-        this.activePlan = res.plan
+        this.activePlan = res.plan || this.activePlan
         this.activated = true
+        if (this.activePlan && !this.activePlan.activated_at) {
+          this.activePlan = { ...this.activePlan, activated_at: Date.now() }
+        }
         return this.activePlan
       } catch (e) {
         this.error = e.userHint || e.message || String(e)

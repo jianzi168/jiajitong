@@ -47,17 +47,28 @@ function detectImbalance(fixedExpense, income) {
   return ratio
 }
 
+// fallback 城市优先级：tier3（最低开销基线）→ tier2 → tier1 → 列表第一个
+const CITY_FALLBACK_TIERS = ['tier3', 'tier2', 'tier1']
+
 /**
  * 检测城市未覆盖（PDD §6.3）
  * 不抛错，返回 fallback 城市信息（含 city_estimated: true 标记）
+ *
+ * 升级说明：原实现固定 fallback 到 tier2 中位数城市（杭州）。
+ * 多 tier 体系下，未覆盖城市统一 fallback 到"最接近的最低开销档（tier3）"，
+ * 保证 UI 标注 city_estimated: true 时使用最保守的消费基线。
  */
 function detectCityNotCovered(cityName, cities) {
   const found = cities.find(c => c.name === cityName)
   if (found) {
     return { city: found, city_estimated: false }
   }
-  // fallback 到 tier2 中位数城市（杭州）
-  const fallback = cities.find(c => c.tier === 'tier2') || cities[0]
+  let fallback = null
+  for (const t of CITY_FALLBACK_TIERS) {
+    fallback = cities.find(c => c.tier === t)
+    if (fallback) break
+  }
+  if (!fallback) fallback = cities[0]
   return {
     city: { ...fallback, name: cityName, originalName: cityName },
     city_estimated: true,
@@ -84,4 +95,5 @@ module.exports = {
   detectImbalance,
   detectCityNotCovered,
   detectBabyTooSoon,
+  CITY_FALLBACK_TIERS,
 }

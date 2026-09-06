@@ -1,24 +1,72 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
+import { ref } from 'vue'
+import { onMounted } from 'vue'
 import NavBar from '@/components/NavBar.vue'
+import { isSubscribeConfigured, UNAVAILABLE_COPY } from '@/utils/featureAvailability.js'
+import { recordSubscribe, getSubscribeStatus } from '@/services/api'
+import { track, trackPage } from '@/utils/analytics'
 
-// Phase 7: 接真实订阅授权引导
-// 真实模板 ID 需在小程序后台申请后填入 (留 P1 推服务端)
-// 留空数组时 uni.requestSubscribeMessage 会回调但不会真订阅, 用于演示授权 UI。
-const tmplIds = []
+// 订阅消息模板 ID 由**后端 app_config 下发**（subscribe_weekly_template_id），
+// 不再前端硬编码 —— 否则运维配好模板后仍需改代码重新发版才能生效。
+// 服务未配置时 configured 为 false，按钮提示「暂未开放」，不影响其他功能。
+const tmplIds = ref([])
 
-function onSubscribe() {
+const subStatus = ref(null) // { configured, records: [{template_id, quota, total}] }
+const syncing = ref(false)
+
+onMounted(async () => {
+  trackPage('setup_reminder')
+  try {
+    const res = await getSubscribeStatus()
+    subStatus.value = res
+    // 后端已配置模板时下发 ID；未配置则保持空数组，按钮走「暂未开放」分支
+    tmplIds.value = res && res.template_id ? [res.template_id] : []
+  } catch (e) {
+    // 云函数不可用时忽略
+  }
+})
+
+// 已授权总次数（多模板累计）
+const totalAccepted = () => {
+  const rs = (subStatus.value && subStatus.value.records) || []
+  return rs.reduce((s, r) => s + (r.total || 0), 0)
+}
+
+async function onSubscribe() {
+  if (!isSubscribeConfigured(tmplIds.value)) {
+    uni.showToast({ title: UNAVAILABLE_COPY.subscribe, icon: 'none' })
+    return
+  }
   // #ifdef MP-WEIXIN
   if (typeof uni === 'undefined' || !uni.requestSubscribeMessage) {
     uni.showToast({ title: '当前环境不支持订阅消息', icon: 'none' })
     return
   }
   uni.requestSubscribeMessage({
-    tmplIds,
-    success: (res) => {
+    tmplIds: tmplIds.value,
+    success: async (res) => {
       const accepted = Object.values(res || {}).filter((v) => v === 'accept').length
-      uni.setStorageSync('subscribe_status', { accepted, at: Date.now() })
-      uni.showToast({ title: '已开启提醒', icon: 'success' })
-      setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 600)
+      if (accepted === 0) {
+        uni.showToast({ title: '未授权订阅', icon: 'none' })
+        return
+      }
+      // 上报授权记录（每授权一次获得一次推送配额）
+      syncing.value = true
+      try {
+        for (const id of tmplIds.value) {
+          if (res[id] === 'accept') await recordSubscribe({ template_id: id })
+        }
+        track('subscribe_accept', { count: accepted })
+        const st = await getSubscribeStatus()
+        subStatus.value = st
+        uni.showToast({ title: '已开启提醒', icon: 'success' })
+        setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 600)
+      } catch (e) {
+        uni.showToast({ title: e.userHint || e.message || '上报失败', icon: 'none' })
+      } finally {
+        syncing.value = false
+      }
     },
     fail: (e) => {
       uni.showToast({ title: (e && e.errMsg) || '订阅失败', icon: 'none' })
@@ -39,7 +87,7 @@ function onLater() {
   <view class="screen">
     <NavBar title="周度提醒" />
 
-    <view class="screen-body screen-body-center">
+    <ScreenBody class="screen-body-center">
       <view class="empty-graphic">
         <text style="font-size:56rpx;">⏰</text>
       </view>
@@ -47,8 +95,24 @@ function onLater() {
       <text class="hint-text hint-text-center">30 秒更新 7 大类支出</text>
       <text class="hint-text hint-text-center">不打扰、不推销</text>
 
-      <button class="grad-btn" @tap="onSubscribe">开启订阅消息</button>
+      <view v-if="totalAccepted() > 0" class="sub-status">
+        已开启提醒 · 累计授权 {{ totalAccepted() }} 次
+      </view>
+
+      <button class="grad-btn" :loading="syncing" :disabled="syncing" @tap="onSubscribe">开启订阅消息</button>
       <button class="grad-btn grad-btn-ghost" @tap="onLater">稍后再说</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>
+
+<style>
+.sub-status {
+  margin-bottom: 24rpx;
+  padding: 12rpx 28rpx;
+  border-radius: 999rpx;
+  background: rgba(76, 175, 80, 0.12);
+  color: #2E7D32;
+  font-size: 24rpx;
+  text-align: center;
+}
+</style>

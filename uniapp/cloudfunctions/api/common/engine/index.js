@@ -26,6 +26,7 @@ module.exports.constants = constants
 module.exports.errors = errors
 module.exports.benchmark = benchmark
 module.exports.rules = rules
+module.exports.ENGINE_VERSION = constants.ENGINE_VERSION
 
 // ESM default 兼容：import engine from '...' 时拿到整个对象
 module.exports.default = module.exports

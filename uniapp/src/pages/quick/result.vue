@@ -1,8 +1,9 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, onMounted } from 'vue'
 import ScoreRing from '@/components/ScoreRing.vue'
 import NavBar from '@/components/NavBar.vue'
-import engineClient from '@/utils/engineClient.js'
+import { calcQuick } from '@/services/api'
 import { useWizardStore } from '@/stores/wizard'
 
 const wizard = useWizardStore()
@@ -31,12 +32,17 @@ function getQuery(name) {
 }
 
 onMounted(async () => {
-  city.value = getQuery('city') || '上海'
+  // 城市优先用 wizard store（step1 已写入），其次 query；都不存在才 fallback（已无硬编码城市）
+  const fromStore = wizard.city
+  const fromQuery = getQuery('city')
+  city.value = fromStore || fromQuery || ''
   income.value = Number(getQuery('income')) || 32000
   housing.value = Number(getQuery('housing')) || 11000
+  // 反向同步：若 store 为空但 query 有，也写回 store（双保险）
+  if (!fromStore && fromQuery) wizard.setCity(fromQuery)
 
   try {
-    const r = await engineClient.callCalcQuick({
+    const r = await calcQuick({
       city: city.value,
       income: income.value,
       housing: housing.value,
@@ -69,8 +75,9 @@ function statusLabel(level) {
 
 function onLogin() {
   // 预填 wizardStore（quick 结果带入完整向导）
+  // city：store 已有则保留（防止 URL 解析失败时硬编码 '上海' 覆盖 step1 已选城市）
   wizard.loadFromQuick({
-    city: city.value,
+    city: wizard.city || city.value,
     income: income.value,
     housing: housing.value,
   })
@@ -89,7 +96,7 @@ function onRetry() {
   <view class="screen">
     <NavBar title="测算结果" />
 
-    <view class="screen-body screen-body-center result-body">
+    <ScreenBody class="screen-body-center result-body">
       <template v-if="loading">
         <text class="loading-text">测算中…</text>
       </template>
@@ -124,12 +131,12 @@ function onRetry() {
           看完整规划书
         </button>
       </template>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 
 <style>
-.result-body { padding-top: 48rpx; }
+.result-body .screen-body-inner { padding-top: 48rpx; }
 .result-card { width: 100%; box-sizing: border-box; margin-top: 24rpx; }
 .tip-strong { font-weight: 700; color: var(--color-text); display: block; margin-bottom: 8rpx; }
 .tip-p { font-size: 28rpx; color: var(--color-text-2); line-height: 1.5; }

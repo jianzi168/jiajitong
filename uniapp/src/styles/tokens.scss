@@ -45,6 +45,8 @@ page {
   color: var(--color-text);
   font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* mesh 渐变背景 */

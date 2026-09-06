@@ -2,108 +2,259 @@
   "pages": [
     {
       "path": "pages/landing/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/home/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/home/empty",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/dashboard/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/dashboard/empty",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/profile/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/quick/step1",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/quick/step2",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/quick/step3",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/quick/result",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/login/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/weekly/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/actions/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/partner/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/partner/join",
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/review/index",
-      "style": { "navigationStyle": "custom" }
-    },
-    {
-      "path": "pages/paywall/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/setup-reminder/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/family/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/plan/history",
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/privacy/index",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/privacy/policy",
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/privacy/pipl",
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/help/index",
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/error/city",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     },
     {
       "path": "pages/error/imbalance",
-      "style": { "navigationStyle": "custom" }
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
     }
   ],
   "subPackages": [
     {
       "root": "subpackages/wizard",
       "pages": [
-        { "path": "step1", "style": { "navigationStyle": "custom" } },
-        { "path": "step2", "style": { "navigationStyle": "custom" } },
-        { "path": "step3", "style": { "navigationStyle": "custom" } },
-        { "path": "step3-warn", "style": { "navigationStyle": "custom" } },
-        { "path": "step4", "style": { "navigationStyle": "custom" } },
-        { "path": "step5", "style": { "navigationStyle": "custom" } },
-        { "path": "loading", "style": { "navigationStyle": "custom" } }
+        {
+          "path": "step1",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        },
+        {
+          "path": "step2",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        },
+        {
+          "path": "step3",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        },
+        {
+          "path": "step3-warn",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        },
+        {
+          "path": "step4",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        },
+        {
+          "path": "step5",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        },
+        {
+          "path": "loading",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        }
       ]
     },
     {
       "root": "subpackages/report",
       "pages": [
-        { "path": "preview", "style": { "navigationStyle": "custom" } },
-        { "path": "full", "style": { "navigationStyle": "custom" } },
-        { "path": "share", "style": { "navigationStyle": "custom" } }
+        {
+          "path": "preview",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        },
+        {
+          "path": "full",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        },
+        {
+          "path": "share",
+          "style": {
+            "navigationStyle": "custom",
+            "disableScroll": true
+          }
+        }
       ]
     }
   ],

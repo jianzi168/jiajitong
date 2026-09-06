@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 
@@ -9,7 +10,11 @@ function getQuery(name) {
   try { return decodeURIComponent(raw) } catch (e) { return raw }
 }
 
-const city = getQuery('city') || '上海'
+const city = getQuery('city') || ''
+// 即时同步到 wizard store，确保后续步骤（即使中途跳转）城市不丢
+import { useWizardStore } from '@/stores/wizard'
+const wizard = useWizardStore()
+if (city) wizard.setCity(city)
 const income = ref(32000)
 
 function onIncomeInput(e) {
@@ -40,7 +45,7 @@ function onNext() {
   <view class="screen">
     <NavBar title="快速测算" />
 
-    <view class="screen-body">
+    <ScreenBody>
       <view class="step-pips step-pips-top">
         <view class="pip on"></view>
         <view class="pip on"></view>
@@ -73,6 +78,6 @@ function onNext() {
       />
 
       <button class="grad-btn" @tap="onNext">下一步</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>

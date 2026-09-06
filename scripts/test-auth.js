@@ -44,12 +44,11 @@ describe('user.bootstrap', () => {
     assert.equal(r.code, 40101)
   })
 
-  test('新用户 → 创建 family + user + subscription:free', async () => {
+  test('新用户 → 创建 family + user', async () => {
     const r = await dispatch({ action: 'user.bootstrap', payload: { nickname: 'alice' } }, makeCtx(OPENID))
     assert.equal(r.code, 0)
     assert.ok(r.data.user.family_id)
     assert.equal(r.data.user.role, 'owner')
-    assert.equal(r.data.subscription.plan_type, 'free')
   })
 
   test('二次登录同一 openid → 不重复建 family', async () => {
@@ -77,18 +76,21 @@ describe('plans.save', () => {
     assert.equal(r.data.plan.version, 1)
   })
 
-  test('保存第二个 plan → 第一个自动 is_active=false', async () => {
+  test('保存多个 plan → 不再限流（免费限流已移除）', async () => {
     const OPENID3 = 'test_openid_ccc'
     await dispatch({ action: 'user.bootstrap' }, makeCtx(OPENID3))
     const out1 = calcFull(fixInput)
-    await dispatch({ action: 'plans.save', payload: { planOutput: out1 } }, makeCtx(OPENID3))
-    // 改一个输入让 score 不同
-    const out2 = calcFull({ ...fixInput, savingsTarget: 8000 })
-    await dispatch({ action: 'plans.save', payload: { planOutput: out2 } }, makeCtx(OPENID3))
+    const r1 = await dispatch({ action: 'plans.save', payload: { planOutput: out1 } }, makeCtx(OPENID3))
+    assert.equal(r1.code, 0, '第一次保存应成功')
 
-    const r = await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID3))
-    assert.equal(r.data.plan.health_score, out2.health_score)
-    assert.equal(r.data.plan.version, 2)
+    // 免费限流已移除：第二次保存应直接成功
+    const out2 = calcFull({ ...fixInput, savingsTarget: 8000 })
+    const r2 = await dispatch({ action: 'plans.save', payload: { planOutput: out2 } }, makeCtx(OPENID3))
+    assert.equal(r2.code, 0, '第二次保存应成功（不再限流）')
+
+    const r3 = await dispatch({ action: 'plans.getActive' }, makeCtx(OPENID3))
+    assert.equal(r3.data.plan.health_score, out2.health_score)
+    assert.equal(r3.data.plan.version, 2)
   })
 })
 

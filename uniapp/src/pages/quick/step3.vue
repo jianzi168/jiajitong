@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, computed } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 
@@ -9,7 +10,10 @@ function getQuery(name) {
   try { return decodeURIComponent(raw) } catch (e) { return raw }
 }
 
-const city = getQuery('city') || '上海'
+const city = getQuery('city') || ''
+import { useWizardStore } from '@/stores/wizard'
+const wizard = useWizardStore()
+if (city) wizard.setCity(city)
 const income = Number(getQuery('income')) || 32000
 const housing = ref(11000)
 
@@ -48,7 +52,7 @@ function onSeeResult() {
   <view class="screen">
     <NavBar title="快速测算" />
 
-    <view class="screen-body">
+    <ScreenBody>
       <view class="step-pips step-pips-top">
         <view class="pip on"></view>
         <view class="pip on"></view>
@@ -87,7 +91,7 @@ function onSeeResult() {
       />
 
       <button class="grad-btn" @tap="onSeeResult">看看测算结果</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>
 

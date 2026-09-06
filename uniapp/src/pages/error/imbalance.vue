@@ -1,4 +1,5 @@
 <script setup>
+import ScreenBody from '@/components/ScreenBody.vue'
 import NavBar from '@/components/NavBar.vue'
 
 const tips = [
@@ -20,7 +21,7 @@ function onExit() {
   <view class="screen">
     <NavBar title="提示" />
 
-    <view class="screen-body screen-body-center empty-state">
+    <ScreenBody class="screen-body-center empty-state">
       <view class="empty-graphic empty-graphic-warn">
         <text style="font-size:56rpx;">⚠️</text>
       </view>
@@ -37,6 +38,6 @@ function onExit() {
 
       <button class="grad-btn" @tap="onBack">返回修改</button>
       <button class="grad-btn grad-btn-ghost" @tap="onExit">退出</button>
-    </view>
+    </ScreenBody>
   </view>
 </template>

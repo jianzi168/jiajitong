@@ -34,13 +34,61 @@ function scoreEmergencyMonths(months) {
   return Math.round(months / 3 * 50) // 0→0, 3→50
 }
 
+// 结构评分阈值（占可支配预算的比例）
+// 与 benchmark-data 一样属 MVP 占位估算，待 Phase 9 内测数据校准。
+const STRUCTURE_BANDS = {
+  // 餐饮占比（恩格尔系数）：越低越从容
+  foodIdeal: 0.28,   // ≤ 此值满分
+  foodWorst: 0.48,   // ≥ 此值 0 分
+  // 弹性支出占比（娱乐 + 服饰 + 其他）：越高抗风险能力越弱
+  flexIdeal: 0.32,
+  flexWorst: 0.57,
+  // 两者权重
+  foodWeight: 0.5,
+  flexWeight: 0.5,
+}
+
 /**
- * 预算结构合理性：MVP 简化为「如果存在 normalize 后的 categories，则视为通过」
- * Phase 5 接入 R01–R07 后会基于「餐饮/娱乐是否在区间内」评分
+ * 预算结构合理性（PDD §6.2.3 第四维，权重 20%）
+ *
+ * 历史状态：此处恒返回 90（无 categories 时 75），占 20% 权重却从不变化——
+ * 等于健康分有五分之一是常数，结构差异完全无法体现。
+ *
+ * 现在评估"推荐预算本身是否是一个健康的分配结构"，看两个信号：
+ *   1. 餐饮占比 —— 越低越从容（恩格尔效应）：弹性空间被吃饭吃掉多少
+ *   2. 弹性支出占比 —— 娱乐+服饰+其他：可压缩空间越大，抗风险能力越强
+ *
+ * 注意：入参 categories 是【推荐预算】而非实际支出，因此这里衡量的是
+ * 分配结构是否健康，不衡量执行偏差（执行偏差由看板/复盘负责）。
+ *
+ * @param {Array<{id:string, suggested:number}>} categories
+ * @returns {number} 0-100
  */
 function scoreStructure(categories) {
   if (!categories || categories.length === 0) return 75 // 无数据时给中等分
-  return 90 // MVP 默认给高分
+
+  const total = categories.reduce((s, c) => s + (Number(c.suggested) || 0), 0)
+  if (total <= 0) return 75
+
+  const shareOf = (id) => {
+    const c = categories.find((x) => x.id === id)
+    return c ? (Number(c.suggested) || 0) / total : 0
+  }
+  const bandScore = (value, ideal, worst) => {
+    const over = Math.max(0, value - ideal)
+    const span = worst - ideal
+    return Math.max(0, Math.min(100, span > 0 ? 100 - (over / span) * 100 : 100))
+  }
+
+  const foodShare = shareOf('food')
+  const flexShare = shareOf('entertainment') + shareOf('clothing') + shareOf('other')
+
+  const foodScore = bandScore(foodShare, STRUCTURE_BANDS.foodIdeal, STRUCTURE_BANDS.foodWorst)
+  const flexScore = bandScore(flexShare, STRUCTURE_BANDS.flexIdeal, STRUCTURE_BANDS.flexWorst)
+
+  return Math.round(
+    foodScore * STRUCTURE_BANDS.foodWeight + flexScore * STRUCTURE_BANDS.flexWeight
+  )
 }
 
 /**
@@ -53,6 +101,27 @@ function scoreStructure(categories) {
  * @param {array} [params.categories] - 类目数组（可选，用于结构分）
  * @returns {{score: number, riskLevel: string, dimensions: object}}
  */
+/**
+ * 结构维度的细分拆解（供 dimensions 输出，便于核对分数来源）
+ * @returns {{hasData:boolean, score:number, foodShare:number, flexShare:number}|null}
+ */
+function describeStructure(categories) {
+  if (!categories || categories.length === 0) return { hasData: false, score: 75, foodShare: null, flexShare: null }
+  const total = categories.reduce((s, c) => s + (Number(c.suggested) || 0), 0)
+  if (total <= 0) return { hasData: false, score: 75, foodShare: null, flexShare: null }
+
+  const shareOf = (id) => {
+    const c = categories.find((x) => x.id === id)
+    return c ? (Number(c.suggested) || 0) / total : 0
+  }
+  return {
+    hasData: true,
+    score: scoreStructure(categories),
+    foodShare: Math.round(shareOf('food') * 10000) / 10000,
+    flexShare: Math.round((shareOf('entertainment') + shareOf('clothing') + shareOf('other')) * 10000) / 10000,
+  }
+}
+
 function calcHealthScore({ income, fixedExpense, savingsTarget, emergencyFundMonths, categories }) {
   const savingsRate = income > 0 ? savingsTarget / income : 0
   const fixedRatio = income > 0 ? fixedExpense / income : 1
@@ -61,7 +130,8 @@ function calcHealthScore({ income, fixedExpense, savingsTarget, emergencyFundMon
     savingsRate: Math.round(savingsRate * 10000) / 10000,
     fixedRatio: Math.round(fixedRatio * 10000) / 10000,
     emergencyMonths: emergencyFundMonths,
-    structureReasonable: categories ? categories.length > 0 : null,
+    // 结构维度此前只有布尔值，无法解释分数来源；改为暴露细分占比便于核对
+    structure: describeStructure(categories),
   }
 
   const sRate = scoreSavingsRate(savingsRate)
