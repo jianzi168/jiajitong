@@ -5,6 +5,7 @@ import NavBar from '@/components/NavBar.vue'
 import ScoreRing from '@/components/ScoreRing.vue'
 import { usePlanStore } from '@/stores/plan'
 import { buildShareModel, drawSharePoster } from '@/utils/poster'
+import { getPlanById } from '@/services/api'
 
 const loading = ref(true)
 const errorMsg = ref('')
@@ -13,11 +14,41 @@ const recStatus = ref({}) // { recId: 'accepted' | 'later' | 'ignored' }
 const activating = ref(false)
 const planStore = usePlanStore()
 
+// 从历史规划书进来时带 plan_id —— 此时必须按 id 取，
+// 否则会退回 getActive 而显示当前方案（历史页白点）
+const planId = ref('')
+
+function readQuery(name) {
+  try {
+    const pages = getCurrentPages()
+    const current = pages[pages.length - 1]
+    const raw = (current && current.options && current.options[name]) || ''
+    return decodeURIComponent(raw)
+  } catch (e) {
+    return ''
+  }
+}
+
+const isHistoryView = computed(() => !!planId.value)
+
 const isActivated = computed(() =>
   !!(planStore.activated || (plan.value && plan.value.activated_at))
 )
 
+async function loadPlanById(id) {
+  const r = await getPlanById({ plan_id: id })
+  if (r && r.plan) {
+    plan.value = r.plan
+    return true
+  }
+  return false
+}
+
 async function loadPlan() {
+  // 0) 指定 plan_id（历史规划书入口）：优先级最高，直接取该版本
+  if (planId.value) {
+    return await loadPlanById(planId.value)
+  }
   // 1) 同步: globalData（刚生成，优先级最高）
   const app = getApp()
   const fromGlobal = app && app.globalData && app.globalData.fullPlanResult
@@ -49,9 +80,12 @@ async function loadPlan() {
 }
 
 onMounted(async () => {
+  planId.value = readQuery('plan_id')
   const ok = await loadPlan()
   if (!ok) {
-    errorMsg.value = '未找到规划数据，请回到向导重新生成'
+    errorMsg.value = isHistoryView.value
+      ? '未找到该版本的规划书'
+      : '未找到规划数据，请回到向导重新生成'
   } else {
     // 从 localStorage 读已采纳状态
     try {
@@ -116,6 +150,12 @@ function goDashboard() {
 
 async function onActivate() {
   if (activating.value) return
+  // 历史版本是只读回看：在这儿点「启用」会把旧方案激活成当前方案，
+  // 用户以为只是看看，实际把追踪基线换掉了
+  if (isHistoryView.value) {
+    uni.showToast({ title: '历史版本仅供回看，无法启用', icon: 'none' })
+    return
+  }
   if (isActivated.value) {
     goDashboard()
     return
@@ -376,7 +416,7 @@ function onShare() {
         <view class="report-section">
           <text class="section-title">下一步行动</text>
           <button class="grad-btn" :disabled="activating" @tap="onActivate">
-            {{ isActivated ? '查看预算看板' : (activating ? '启用中…' : '启用预算追踪') }}
+            {{ isHistoryView ? '历史版本（只读）' : (isActivated ? '查看预算看板' : (activating ? '启用中…' : '启用预算追踪')) }}
           </button>
           <button class="text-link" @tap="onInvite">
             邀请伴侣共读

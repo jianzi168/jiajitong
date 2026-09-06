@@ -14,7 +14,9 @@ const subscriptionLabel = uni.getStorageSync('nickname') || '我的家庭'
 const menus = [
   { label: '家庭档案', url: '/pages/family/index' },
   { label: '伴侣管理', url: '/pages/partner/index' },
-  { label: '历史规划书', url: '/subpackages/report/full' },
+  // 原指向报告完整页，但那个页面只显示当前方案，与菜单名不符。
+  // 改指向版本列表，点进去才是真正的历史版本。
+  { label: '历史规划书', url: '/pages/plan/history' },
   { label: '数据导出与隐私', url: '/pages/privacy/index' },
   { label: '帮助与反馈', url: '/pages/help/index' }
 ]

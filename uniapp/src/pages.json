@@ -127,6 +127,13 @@
       }
     },
     {
+      "path": "pages/plan/history",
+      "style": {
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
       "path": "pages/privacy/index",
       "style": {
         "navigationStyle": "custom",

@@ -35,15 +35,13 @@ async function main() {
     'action_statuses',       // 行动清单采纳状态
     'subscribe_records',     // 订阅消息推送配额
     'feedbacks',             // 帮助与反馈
-
-    // ---- 设计预留、代码尚未使用（2 个）----
-    // 技术方案 §4 有定义，但应用代码从未读写：
-    //   - recommendation_status：建议采纳状态最终落在 action_statuses，本集合未启用
-    //   - calc_sessions：免登录测算暂存未实现，当前测算结果不落库
-    // 保留建集合是为了与 check-indexes.js 及技术方案保持一致；
-    // 若确认不再需要，需同时改这三处，避免文档与脚本脱节。
-    'recommendation_status', 'calc_sessions',
   ]
+  // 已移除（2026-09-06）：recommendation_status / calc_sessions 两个集合
+  // 此前按技术方案 §4 建了但代码从未读写，属于死 schema：
+  //   - recommendation_status：建议采纳状态实际落在 action_statuses，本集合被取代
+  //   - calc_sessions：免登录测算暂存未采用 —— 快测只有 3 个字段，重填成本极低，
+  //     而为匿名会话存储财务数据反而增加隐私面与 TTL 清理负担
+  // 注：已存在的云端集合不会被本脚本删除，仅不再新建。
 
   console.log('=== 1. 创建集合 ===')
   for (const name of collections) {
@@ -75,12 +73,8 @@ async function main() {
 
   // app_config: 业务键唯一
   await safeCreateIndex(db, 'app_config', 'key_1', { key: 1 }, { unique: true })
-  // recommendation_status (Phase 7 留 P1,本期先建索引)
-  await safeCreateIndex(db, 'recommendation_status', 'family_plan_rule', { family_id: 1, plan_id: 1, rule_id: 1 }, { unique: true })
   // family_invites: 邀请码唯一
   await safeCreateIndex(db, 'family_invites', 'invite_code_1', { invite_code: 1 }, { unique: true })
-  // calc_sessions: 过期清理
-  await safeCreateIndex(db, 'calc_sessions', 'expire_at_1', { expire_at: 1 })
   // analytics_events: 漏斗
   await safeCreateIndex(db, 'analytics_events', 'event_created', { event: 1, created_at: -1 })
   // family_members: 一户一人

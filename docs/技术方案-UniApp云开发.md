@@ -331,13 +331,20 @@ export async function callApi(action, payload = {}, options = {}) {
 | `financial_profiles` | 财务档案 | ❌ 禁止 |
 | `budget_plans` | 预算方案/规划书 | ❌ 禁止 |
 | `weekly_entries` | 周度填报 | ❌ 禁止 |
-| `subscriptions` | 订阅权益 | ❌ 禁止 |
-| `orders` | 支付订单 | ❌ 禁止 |
-| `recommendation_status` | 建议采纳状态 | ❌ 禁止 |
 | `family_invites` | 伴侣邀请 | ❌ 禁止 |
-| `calc_sessions` | 免登录测算暂存 | ❌ 禁止 |
 | `analytics_events` | 埋点（可选） | ❌ 禁止 |
 | `app_config` | 运营配置 | ❌ 禁止 |
+
+**已移除的集合（2026-09-06 更新，不再新建）：**
+
+| 集合 | 原用途 | 移除原因 |
+| --- | --- | --- |
+| `subscriptions` | 订阅权益 | 商业化链路已移除（支付/订阅不做） |
+| `orders` | 支付订单 | 同上 |
+| `recommendation_status` | 建议采纳状态 | 实际落在 `action_statuses`，本集合被取代 |
+| `calc_sessions` | 免登录测算暂存 | 未采用：快测仅 3 个字段重填成本极低，而为匿名会话存储财务数据反而增加隐私面与 TTL 清理负担 |
+
+> 注：已存在的云端集合不会被建表脚本删除，仅不再新建。
 
 > **基准数据不建集合**，避免误改 + 节省读次数。
 
@@ -466,49 +473,16 @@ export async function callApi(action, payload = {}, options = {}) {
 
 **索引**：`family_id + week_start`（唯一，云函数 upsert 保证）
 
-#### subscriptions
+#### ~~subscriptions~~ / ~~orders~~（已移除）
 
-```javascript
-{
-  _id: "auto",
-  openid: "",
-  family_id: "",
-  plan_type: "pro_yearly",        // free | report_once | pro_yearly | pro_family
-  expires_at: Date,
-  source_order_id: "",
-  created_at: Date
-}
-```
+商业化链路于 2026-08 移除（支付 / 订阅不做），这两个集合不再新建。
+原结构保留在 git 历史中备查。
 
-#### orders
+#### ~~calc_sessions~~（已移除）
 
-```javascript
-{
-  _id: "order_xxx",
-  openid: "",
-  family_id: "",
-  sku: "report_once",             // report_once | pro_yearly | pro_family
-  amount_fen: 1990,
-  status: "pending",              // pending | paid | failed | refunded
-  wx_transaction_id: "",
-  created_at: Date,
-  paid_at: Date
-}
-```
-
-#### calc_sessions（免登录暂存）
-
-```javascript
-{
-  _id: "auto",
-  _openid: "",
-  type: "quick",                  // quick | full
-  input: { /* 原始输入 */ },
-  output: { /* calc 结果 */ },
-  expire_at: Date,                // 创建 + 24h，cronJobs 清理
-  created_at: Date
-}
-```
+原设计用于免登录测算暂存（24h 过期、cronJobs 清理），实际未采用：
+快测只有 3 个字段，重填成本极低；而为匿名会话存储财务数据反而
+增加隐私面与 TTL 清理负担。测算结果不落库。
 
 #### family_invites
 
@@ -539,22 +513,10 @@ export async function callApi(action, payload = {}, options = {}) {
 
 **索引**：`family_id + openid`（唯一）
 
-#### recommendation_status
+#### ~~recommendation_status~~（已移除）
 
-```javascript
-{
-  _id: "auto",
-  family_id: "",
-  plan_id: "",
-  rule_id: "R-N01",               // R01-R07 | R-N01-R-N07
-  status: "later",                // adopted | later | ignored
-  acted_at: Date,                 // 采纳时间，nullable
-  created_at: Date,
-  updated_at: Date
-}
-```
-
-**索引**：`family_id + plan_id + rule_id`（唯一，云函数 upsert 保证）
+建议采纳状态实际落在 `action_statuses`（`family_id + rec_id` 唯一），
+本集合从未被代码读写，已移除。原结构保留在 git 历史中备查。
 
 #### analytics_events
 
@@ -714,7 +676,8 @@ async function requireFamilyMember(openid, familyId) {
 
 ```javascript
 // calc.quick / calc.full：每 openid 每分钟最多 10 次
-// 使用 calc_sessions 或独立 rate_limits 集合，TTL 1 分钟
+// 如启用限流，使用独立 rate_limits 集合（TTL 1 分钟），
+// 不要用 calc_sessions（该集合已移除）
 ```
 
 ---
@@ -806,8 +769,7 @@ const data = await callApi('calc.quick', {
 3. 校验 housing/income 范围
 4. fixed_ratio = housing / income；≥ 0.9 → 40001 IMBALANCE
 5. engine.calcQuick(input) → output
-6. 写入 calc_sessions（type: quick, expire_at: +24h）
-7. 返回 output + session_id
+6. 返回 output（不落库，见 §4 已移除 calc_sessions 的说明）
 ```
 
 #### 结果页
@@ -851,12 +813,13 @@ async onWechatLogin() {
    a. 创建 family
    b. 创建 users（role: owner）
    c. 创建 financial_profiles 空壳
-   d. 创建 subscriptions（plan_type: free）
-2. 若有 mergeSessionId：
-   a. 读 calc_sessions
-   b. 合并 input → financial_profiles
-   c. 若 type=full 且含 output → plan.save 草稿
-3. 返回 { user, family, subscription, activePlan }
+2. 若有本地测算结果（前端传入）：
+   a. 合并 input → financial_profiles
+   b. 若含 output → plan.save 草稿
+3. 返回 { user, family, activePlan }
+
+> 注：商业化移除后不再创建 subscriptions；calc_sessions 已移除，
+> 免登录测算结果由前端临时持有，登录后通过 plan.save 落库。
 ```
 
 ---
@@ -904,8 +867,7 @@ const data = await callApi('calc.full', {
 3. fixed_ratio ≥ 0.9 → 40001
 4. engine.calcFull(input) → 完整 plan 对象
 5. engine.rules.evaluate(plan, input) → recommendations
-6. 写 calc_sessions(type: full)
-7. 返回 plan（不含 _id，待 plan.save）
+6. 返回 plan（不含 _id，待 plan.save；测算过程不落库）
 ```
 
 #### 快测数据带入
@@ -1071,7 +1033,9 @@ callApi('recommendation.update', {
 })
 ```
 
-集合 `recommendation_status`：`(family_id, plan_id, rule_id)` 唯一。
+实现注记：该能力对应 `actions.saveStatus` / `actions.getStatus`，
+状态落在集合 `action_statuses`，索引 `(family_id, rec_id)` 唯一
+（原设计的 `recommendation_status` 集合已移除）。
 
 ---
 
@@ -1172,10 +1136,10 @@ callApi('partner.acceptInvite', { code })
 
 | 任务 | cron | 逻辑 |
 |------|------|------|
-| 周度提醒 | `0 0 12 * * 0` | 查 active plan 家庭 → 发「填报提醒」 |
-| 超支预警 | 实时队列 | weekly.submit 写入 notify_queue，cron 每 5 分钟消费 |
-| 清理 session | `0 0 * * *` | 删 expire_at < now 的 calc_sessions |
-| 月末复盘 | `0 0 1 * *` | 生成 report.monthly 快照 |
+| 周度提醒 | `0 0 20 * * SUN` | 查 active plan 家庭 → 发「填报提醒」（已实现，见 `config.json` 的 `weeklyRemindTimer`） |
+| 超支预警 | 实时队列 | weekly.submit 写入 notify_queue，cron 每 5 分钟消费（未实现） |
+| ~~清理 session~~ | — | 已移除：`calc_sessions` 不再存在，无需 TTL 清理 |
+| 月末复盘 | `0 0 1 * *` | 生成 report.monthly 快照（未实现；当前 `reviews.getMonthly` 为实时聚合） |
 
 **前置**：用户在 `setup-reminder` 页 `uni.requestSubscribeMessage` 授权模板 ID。
 
@@ -1302,8 +1266,11 @@ logger.info({ openid, action, income: '***' })
 ### 9.3 account.delete 级联
 
 ```
-删除顺序：weekly_entries → budget_plans → recommendation_status 
-  → financial_profiles → family_members → families → orders → subscriptions → users
+删除顺序：weekly_entries → budget_plans → action_statuses
+  → financial_profiles → family_members → families → users
+
+注：原含 recommendation_status（被 action_statuses 取代）、
+orders / subscriptions（商业化移除），均已不存在。
 ```
 
 ---
@@ -1434,14 +1401,14 @@ cloudfunctions/api/handlers/
 | `budget_plans` | `family_id + is_active` | 否 |
 | `budget_plans` | `family_id + created_at` | 否 |
 | `weekly_entries` | `family_id + week_start` | ✅ 唯一 |
-| `recommendation_status` | `family_id + plan_id + rule_id` | ✅ 唯一 |
-| `subscriptions` | `openid` | 否 |
-| `subscriptions` | `family_id` | 否 |
-| `orders` | `openid + created_at` | 否 |
+| `action_statuses` | `family_id + rec_id` | ✅ 唯一 |
 | `family_invites` | `invite_code` | ✅ 唯一 |
-| `calc_sessions` | `_openid + created_at` | 否 |
-| `calc_sessions` | `expire_at`（TTL 清理用） | 否 |
 | `analytics_events` | `_openid + created_at` | 否 |
+| `subscribe_records` | `openid + template_id` | ✅ 唯一 |
+| `app_config` | `key` | ✅ 唯一 |
+
+> 已移除集合的索引一并删除：`recommendation_status`（被 action_statuses 取代）、
+> `calc_sessions`（未采用）、`orders` / `subscriptions`（商业化移除）。
 | `analytics_events` | `event + created_at` | 否 |
 | `app_config` | `key` | ✅ 唯一 |
 

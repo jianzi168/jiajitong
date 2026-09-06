@@ -250,6 +250,7 @@ async function plansSave(ctx, payload) {
       activated_at: prevActivatedAt,
     }
     memoryStore.budget_plans.set(saved._id, saved)
+    stripPlanInputFromSupersededLocal(user.family_id)
   }
 
   return ok({ plan: saved })
@@ -277,6 +278,91 @@ async function plansGetActive(ctx, payload) {
     // 避免读接口带写副作用；正式迁移走 scripts/recalc-plans.js）
     stale: isPlanStale(plan),
   })
+}
+
+// ---------- plans.list / plans.getById（历史规划书）----------
+function shapeHistoryEntry(p) {
+  return {
+    _id: p._id,
+    version: p.version,
+    created_at: p.created_at,
+    activated_at: p.activated_at || null,
+    is_active: !!p.is_active,
+    health_score: p.health_score,
+    risk_level: p.risk_level,
+    engine_version: p.engine_version || 1,
+  }
+}
+
+/**
+ * 列出本家庭的全部历史方案。
+ *
+ * 存历史是为了"回看"，不是为了"留垃圾"：db.savePlan 每次生成都会把旧版本
+ * 保留（is_active=false），此前没有任何接口能读到它们。
+ */
+async function plansList(ctx) {
+  const authErr = requireAuth(ctx); if (authErr) return authErr
+
+  let user
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(ctx.openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  } else {
+    user = memoryStore.users.get(ctx.openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  }
+
+  let plans
+  if (usingCloudDb) {
+    plans = await db.listPlans(user.family_id)
+  } else {
+    plans = Array.from(memoryStore.budget_plans.values())
+      .filter((p) => p && p.family_id === user.family_id)
+      .sort((a, b) => {
+        const byTime = new Date(b.created_at) - new Date(a.created_at)
+        // 同毫秒时用 version 兜底，保证顺序确定（与云端 orderBy 一致）
+        return byTime !== 0 ? byTime : (b.version || 0) - (a.version || 0)
+      })
+      .slice(0, 50)
+      .map(shapeHistoryEntry)
+  }
+  return ok({ plans })
+}
+
+/**
+ * 取指定方案的完整内容。
+ *
+ * **必须校验归属**：plan_id 来自客户端，不校验就能读到别人家的财务数据。
+ */
+async function plansGetById(ctx, payload) {
+  const authErr = requireAuth(ctx); if (authErr) return authErr
+  const planId = payload && payload.plan_id
+  if (!planId) {
+    return fail(ERROR_CODE.VALIDATION_ERROR, 'VALIDATION_ERROR', '缺少 plan_id')
+  }
+
+  let user
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(ctx.openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  } else {
+    user = memoryStore.users.get(ctx.openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+  }
+
+  let plan
+  if (usingCloudDb) {
+    plan = await db.getPlanById(planId)
+  } else {
+    plan = memoryStore.budget_plans.get(planId) || null
+  }
+
+  // 归属校验：不存在或不属于本家庭，一律按不存在处理（不泄露他人数据存在性）
+  if (!plan || plan.family_id !== user.family_id) {
+    return fail(ERROR_CODE.NOT_FOUND, 'NOT_FOUND', '方案不存在')
+  }
+
+  return ok({ plan: ensureRecommendations(plan) })
 }
 
 // ---------- plans.recalc（按当前引擎重算存量方案）----------
@@ -442,6 +528,27 @@ async function familiesSaveProfile(ctx, payload) {
       updated_at: saved.updated_at || null,
     },
   })
+}
+
+/**
+ * 内存版的 stripPlanInputFromSuperseded（与 db.js 同构）。
+ *
+ * 同样只清 engine_version 已是当前版本的方案 —— 旧版本方案仍需 plan_input
+ * 供迁移脚本重算。本地测试路径必须与云端保持一致，否则测不出这类问题。
+ */
+function stripPlanInputFromSupersededLocal(familyId) {
+  for (const [k, v] of memoryStore.budget_plans) {
+    if (
+      v &&
+      v.family_id === familyId &&
+      !v.is_active &&
+      Number(v.engine_version || 1) >= planRecalc.ENGINE_VERSION &&
+      v.plan_input != null
+    ) {
+      v.plan_input = null
+      memoryStore.budget_plans.set(k, v)
+    }
+  }
 }
 
 // ---------- helpers (Phase 7) ----------
@@ -1694,6 +1801,8 @@ module.exports = {
   'plans.getActive': plansGetActive,
   'plans.activate': plansActivate,
   'plans.recalc': plansRecalc,
+  'plans.list': plansList,
+  'plans.getById': plansGetById,
   'dashboard.get': dashboardGet,
   'weekly.getCurrent': weeklyGetCurrent,
   'weekly.submit': weeklySubmit,

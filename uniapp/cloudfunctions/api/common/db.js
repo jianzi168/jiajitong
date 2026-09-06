@@ -206,7 +206,75 @@ async function savePlan({ familyId, planInput, planOutput }) {
     activated_at: prevActivatedAt,
   }
   await db.collection('budget_plans').doc(id).set({ data })
+  await stripPlanInputFromSuperseded(familyId)
   return { _id: id, ...data }
+}
+
+/**
+ * 数据最小化：清掉该家庭「已被取代的旧方案」的原始输入（收入/支出明细）。
+ *
+ * plan_input 只在重算时需要，而重算只作用于当前生效方案；
+ * 历史版本仅用于回看，保留测算结果即可。这样能减少敏感数据留存面
+ * （见开发计划 §2.5）。
+ *
+ * **关键约束：只清 engine_version 已是当前版本的方案。**
+ * 旧版本方案仍需 plan_input 供 scripts/recalc-plans.js 重算 ——
+ * 若不加这个守卫，用户一存新方案，其历史方案的迁移就永久失效了。
+ *
+ * 失败不影响主流程：这是隐私增强，不是一致性要求。
+ */
+async function stripPlanInputFromSuperseded(familyId) {
+  const db = getDB()
+  try {
+    await db.collection('budget_plans')
+      .where({ family_id: familyId, is_active: false, engine_version: ENGINE_VERSION })
+      .update({ data: { plan_input: null } })
+  } catch (e) {
+    console.error('[db.stripPlanInputFromSuperseded] failed', e && e.message)
+  }
+}
+
+/**
+ * 列出家庭的全部历史方案（按创建时间倒序）。
+ *
+ * 只返回列表所需字段：完整方案含 7 类预算、建议、风险报告，
+ * 列表页一次拉全量会明显拖慢。需要详情再走 getPlanById。
+ */
+async function listPlans(familyId) {
+  const db = getDB()
+  // version 作为 tiebreaker：连续生成两版时 created_at 可能落在同一毫秒，
+  // 只按 created_at 排序会得到不确定顺序（version 每家庭单调递增，可确定）
+  const { data } = await db.collection('budget_plans')
+    .where({ family_id: familyId })
+    .orderBy('created_at', 'desc')
+    .orderBy('version', 'desc')
+    .limit(50)
+    .get()
+  return (data || []).map((p) => ({
+    _id: p._id,
+    version: p.version,
+    created_at: p.created_at,
+    activated_at: p.activated_at || null,
+    is_active: !!p.is_active,
+    health_score: p.health_score,
+    risk_level: p.risk_level,
+    engine_version: p.engine_version || 1,
+  }))
+}
+
+/**
+ * 按 id 取完整方案（含所有派生字段），供历史方案详情使用。
+ * 不校验 family_id —— 归属校验在 handler 层做（那里才有 user 上下文）。
+ */
+async function getPlanById(planId) {
+  if (!planId) return null
+  const db = getDB()
+  try {
+    const { data } = await db.collection('budget_plans').doc(planId).get()
+    return data || null
+  } catch (e) {
+    return null
+  }
 }
 
 /**
@@ -816,6 +884,8 @@ module.exports = {
   FAMILY_STAGES,
   createFinancialProfile,
   savePlan,
+  listPlans,
+  getPlanById,
   getActivePlan,
   isPlanStale,
   computePlanUpdate,

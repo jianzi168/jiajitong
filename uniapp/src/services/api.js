@@ -72,6 +72,8 @@ export async function ensureAndActivate(localPlan = null) {
 }
 
 export const getActivePlan    = wrap('plans.getActive')
+export const listPlans        = wrap('plans.list')
+export const getPlanById      = wrap('plans.getById')
 export const activatePlan     = wrap('plans.activate')
 export const recalcPlan       = wrap('plans.recalc')
 export const getDashboard     = wrap('dashboard.get')
