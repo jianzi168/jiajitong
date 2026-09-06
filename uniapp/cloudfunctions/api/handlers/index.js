@@ -707,6 +707,134 @@ function accumulateEntriesByDayShare(monthEntries, year, month) {
   return usedByCat
 }
 
+/**
+ * 把周记账按「跨月按天比例」摊到各月，一次遍历产出全部月份。
+ *
+ * 复用 dateUtil.daysOfWeekInMonth，与看板 / 复盘口径一致 ——
+ * 不能只按 week_start 所在月整周归属（会导致每月 1~6 日的支出整周算进上月）。
+ *
+ * @param {Array} entries - weekly_entries
+ * @returns {Map<string, {total:number, byCat:object}>} key = 'YYYY-MM'
+ */
+function aggregateEntriesByMonth(entries) {
+  const months = new Map()
+  for (const e of entries) {
+    if (!e || !e.week_start) continue
+    const parts = e.week_start.split('-').map(Number)
+    if (parts.length !== 3 || parts.some(Number.isNaN)) continue
+    const [y, m] = parts
+
+    // 一周最多跨 2 个月：本月 与 次月
+    const candidates = [[y, m], m === 12 ? [y + 1, 1] : [y, m + 1]]
+    for (const [yy, mm] of candidates) {
+      const days = dateUtil.daysOfWeekInMonth(e.week_start, yy, mm)
+      if (days <= 0) continue
+      const key = `${yy}-${String(mm).padStart(2, '0')}`
+      if (!months.has(key)) {
+        months.set(key, { total: 0, byCat: {} })
+      }
+      const bucket = months.get(key)
+      const ratio = days / 7
+      for (const [k, v] of Object.entries(e.categories || {})) {
+        bucket.byCat[k] = (bucket.byCat[k] || 0) + Number(v || 0) * ratio
+        bucket.total += Number(v || 0) * ratio
+      }
+    }
+  }
+  // 统一在此取整，避免各调用点口径不一
+  for (const bucket of months.values()) {
+    bucket.total = Math.round(bucket.total)
+    for (const k of Object.keys(bucket.byCat)) {
+      bucket.byCat[k] = Math.round(bucket.byCat[k])
+    }
+  }
+  return months
+}
+
+// ---------- reviews.getTrend（多月趋势）----------
+/**
+ * 多月行为趋势。
+ *
+ * 只统计**由填报行为产生**的指标（支出、储蓄率、餐饮占比、执行率），
+ * 不含健康分 —— 健康分是方案属性而非当月行为，用户若未重新测算，
+ * 画出来是一条毫无意义的直线。
+ */
+async function reviewsGetTrend(ctx, payload) {
+  const authErr = requireAuth(ctx); if (authErr) return authErr
+  const openid = ctx.openid
+
+  let user, plan
+  if (usingCloudDb) {
+    user = await db.getUserByOpenid(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    plan = await db.getActivePlan(user.family_id)
+  } else {
+    user = memoryStore.users.get(openid)
+    if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
+    plan = findActivePlanLocal(user.family_id)
+  }
+
+  if (!plan) return ok({ months: [], has_data: false })
+
+  const limit = Math.min(24, Math.max(3, Number((payload && payload.limit) || 12)))
+
+  let entries
+  if (usingCloudDb) {
+    entries = await db.getAllWeeklyEntries(user.family_id, 200)
+  } else {
+    entries = Array.from(memoryStore.weekly_entries.values())
+      .filter((e) => e && e.family_id === user.family_id)
+  }
+
+  const byMonth = aggregateEntriesByMonth(entries)
+  if (byMonth.size === 0) return ok({ months: [], has_data: false })
+
+  const ms = plan.monthly_summary || {}
+  const income = Number(ms.income) || 0
+  const fixed = Number(ms.fixed_expense) || 0
+  const disposable = Number(ms.disposable) || 0
+
+  // 只取有数据的月份，按时间升序，最多 limit 个（取最近的）
+  const keys = Array.from(byMonth.keys()).sort().slice(-limit)
+
+  const months = keys.map((key) => {
+    const b = byMonth.get(key)
+    const spend = b.total
+    const savingsActual = Math.max(0, Math.round(income - fixed - spend))
+    const savingsRate = income > 0 ? Math.round((savingsActual / income) * 100) : null
+    const foodRatio = spend > 0 ? Math.round(((b.byCat.food || 0) / spend) * 100) : null
+    const executionRate = disposable > 0 ? Math.round((spend / disposable) * 100) : null
+    const [, mm] = key.split('-')
+    return {
+      month: key,
+      label: `${Number(mm)}月`,
+      spend,
+      savings_actual: savingsActual,
+      savings_rate: savingsRate,
+      food_ratio: foodRatio,
+      execution_rate: executionRate,
+    }
+  })
+
+  // 与上月对比的变化量（首月为 null）
+  months.forEach((m, i) => {
+    const prev = i > 0 ? months[i - 1] : null
+    m.deltas = {
+      spend: prev ? m.spend - prev.spend : null,
+      savings_rate: prev && prev.savings_rate !== null && m.savings_rate !== null
+        ? m.savings_rate - prev.savings_rate : null,
+      food_ratio: prev && prev.food_ratio !== null && m.food_ratio !== null
+        ? m.food_ratio - prev.food_ratio : null,
+    }
+  })
+
+  return ok({
+    months,
+    has_data: true,
+    baseline: { income, fixed_expense: fixed, disposable },
+  })
+}
+
 // ---------- plans.activate (Phase 7) ----------
 async function plansActivate(ctx, payload) {
   const authErr = requireAuth(ctx); if (authErr) return authErr
@@ -1850,6 +1978,7 @@ module.exports = {
   'families.getMembers': familiesGetMembers,
   // Phase 10 月末自动复盘
   'reviews.getMonthly': reviewsGetMonthly,
+  'reviews.getTrend': reviewsGetTrend,
   // Phase 10 行动清单写库
   'actions.getStatus': actionsGetStatus,
   'actions.saveStatus': actionsSaveStatus,

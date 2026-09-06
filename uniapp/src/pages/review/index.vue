@@ -3,7 +3,7 @@ import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import NavBar from '@/components/NavBar.vue'
-import { getMonthlyReview } from '@/services/api'
+import { getMonthlyReview, getMonthlyTrend } from '@/services/api'
 import { trackPage } from '@/utils/analytics'
 
 const loading = ref(true)
@@ -54,6 +54,44 @@ function onNextMonth() {
   load()
 }
 
+/**
+ * 多月趋势。
+ *
+ * 只统计由填报行为产生的指标（支出 / 储蓄率 / 餐饮占比 / 执行率），
+ * 不含健康分 —— 健康分是方案属性而非当月行为，未重新测算时画出来
+ * 是一条毫无意义的直线。
+ */
+const trend = ref(null)
+
+onMounted(async () => {
+  try {
+    const r = await getMonthlyTrend({ limit: 6 })
+    trend.value = (r && r.months && r.months.length) ? r : null
+  } catch (e) {
+    trend.value = null // 趋势是增强项，失败不影响复盘主流程
+  }
+})
+
+// 柱状图：以区间内最大支出为满高，避免单月数值大时其他柱看不见
+const maxSpend = computed(() => {
+  const list = (trend.value && trend.value.months) || []
+  return list.reduce((m, x) => Math.max(m, x.spend || 0), 0)
+})
+const trendBars = computed(() => {
+  const list = (trend.value && trend.value.months) || []
+  const max = maxSpend.value
+  return list.map((m) => ({
+    ...m,
+    // 至少留 6% 高度，支出为 0 的月份也看得见柱子
+    heightPct: max > 0 ? Math.max(6, Math.round((m.spend / max) * 100)) : 6,
+  }))
+})
+// 最近一个月的同比变化，用于「比上月」摘要
+const latestTrend = computed(() => {
+  const list = (trend.value && trend.value.months) || []
+  return list.length ? list[list.length - 1] : null
+})
+
 const hasData = computed(() => review.value && review.value.has_data)
 const metrics = computed(() => (review.value && review.value.metrics) || null)
 
@@ -69,6 +107,22 @@ const metricItems = computed(() => {
 
 // 空态文案随所选月份变化（历史月说"该月"，本月说"本月"）
 const emptyMonthLabel = computed(() => (isCurrentMonth.value ? '本月' : `${month.value}月`))
+
+/**
+ * 变化量文案。higherIsBetter 用于判断好坏色：
+ * 储蓄率越高越好，支出/餐饮占比则相反。
+ */
+function deltaText(d) {
+  if (d === null || d === undefined) return ''
+  if (d === 0) return '持平'
+  const sign = d > 0 ? '↑' : '↓'
+  return `${sign}${Math.abs(d)}`
+}
+function deltaClass(d, higherIsBetter) {
+  if (d === null || d === undefined || d === 0) return 'flat'
+  const good = higherIsBetter ? d > 0 : d < 0
+  return good ? 'good' : 'bad'
+}
 
 function onWeekly() {
   uni.navigateTo({ url: '/pages/weekly/index' })
@@ -93,6 +147,51 @@ function onFullReport() {
           :class="{ disabled: isCurrentMonth }"
           @tap="onNextMonth"
         >›</text>
+      </view>
+
+      <!-- 多月趋势：先看到走势，再往下看单月明细 -->
+      <view v-if="trend" class="glass-card trend-card">
+        <text class="trend-title">近 {{ trendBars.length }} 个月支出趋势</text>
+
+        <view class="trend-chart">
+          <view v-for="b in trendBars" :key="b.month" class="trend-col">
+            <text class="trend-val">¥{{ b.spend }}</text>
+            <view class="trend-bar-wrap">
+              <view class="trend-bar" :style="{ height: b.heightPct + '%' }"></view>
+            </view>
+            <text class="trend-label">{{ b.label }}</text>
+          </view>
+        </view>
+
+        <view v-if="latestTrend" class="trend-summary">
+          <view class="trend-metric">
+            <text class="trend-metric-key">储蓄率</text>
+            <text class="trend-metric-val">
+              {{ latestTrend.savings_rate }}%
+              <text v-if="latestTrend.deltas.savings_rate !== null" class="trend-delta" :class="deltaClass(latestTrend.deltas.savings_rate, true)">
+                {{ deltaText(latestTrend.deltas.savings_rate) }}
+              </text>
+            </text>
+          </view>
+          <view class="trend-metric">
+            <text class="trend-metric-key">餐饮占比</text>
+            <text class="trend-metric-val">
+              {{ latestTrend.food_ratio }}%
+              <text v-if="latestTrend.deltas.food_ratio !== null" class="trend-delta" :class="deltaClass(latestTrend.deltas.food_ratio, false)">
+                {{ deltaText(latestTrend.deltas.food_ratio) }}
+              </text>
+            </text>
+          </view>
+          <view class="trend-metric">
+            <text class="trend-metric-key">预算执行</text>
+            <text class="trend-metric-val">
+              {{ latestTrend.execution_rate }}%
+              <text v-if="latestTrend.deltas.spend !== null" class="trend-delta" :class="deltaClass(latestTrend.deltas.spend, false)">
+                {{ deltaText(latestTrend.deltas.spend) }}
+              </text>
+            </text>
+          </view>
+        </view>
       </view>
 
       <!-- 加载中 -->
@@ -200,6 +299,84 @@ function onFullReport() {
   gap: 40rpx;
   padding: 8rpx 0 24rpx;
 }
+
+/* 多月趋势 */
+.trend-card {
+  padding: 28rpx 24rpx 24rpx;
+  margin-bottom: 32rpx;
+}
+.trend-title {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 24rpx;
+}
+.trend-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12rpx;
+  height: 220rpx;
+}
+.trend-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+.trend-val {
+  font-size: 20rpx;
+  color: var(--color-text-3);
+  margin-bottom: 8rpx;
+}
+/* 柱体外框占满剩余高度，柱体自身按百分比从底部生长 */
+.trend-bar-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.trend-bar {
+  width: 70%;
+  border-radius: 8rpx 8rpx 0 0;
+  background: linear-gradient(180deg, #FF8A5C, #FF6B8A);
+}
+.trend-label {
+  font-size: 22rpx;
+  color: var(--color-text-3);
+  margin-top: 10rpx;
+}
+.trend-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-top: 24rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid var(--color-border);
+}
+.trend-metric {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6rpx;
+}
+.trend-metric-key {
+  font-size: 22rpx;
+  color: var(--color-text-3);
+}
+.trend-metric-val {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.trend-delta { font-size: 20rpx; margin-left: 4rpx; }
+.trend-delta.good { color: #22C55E; }
+.trend-delta.bad { color: var(--color-coral); }
+.trend-delta.flat { color: var(--color-text-3); }
 .month-arrow {
   font-size: 44rpx;
   line-height: 1;

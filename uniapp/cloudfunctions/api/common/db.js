@@ -740,6 +740,23 @@ function currentMonthRange(d = new Date()) {
  * 查询窗口向左放宽 7 天以覆盖跨月周，调用方再用
  * dateUtil.daysOfWeekInMonth() 按天比例分摊。
  */
+/**
+ * 取该家庭全部周记账（按 week_start 升序），用于多月趋势聚合。
+ *
+ * 趋势需要跨月一次性统计，逐月查询会变成 N 次请求；
+ * 这里一次取全量（上限 max 条，约 4 年）。
+ */
+async function getAllWeeklyEntries(familyId, max = 200) {
+  const db = getDB()
+  const res = await db.collection('weekly_entries')
+    .where({ family_id: familyId })
+    .orderBy('week_start', 'asc')
+    .limit(max)
+    .get()
+    .catch(() => ({ data: [] }))
+  return res.data || []
+}
+
 async function getMonthOverlappingEntries(familyId, year, month) {
   const db = getDB()
   const _ = db.command
@@ -898,6 +915,7 @@ module.exports = {
   recalcAndPersistPlan,
   activatePlan,
   getMonthOverlappingEntries,
+  getAllWeeklyEntries,
   getWeeklyEntry,
   saveWeeklyEntry,
   getLastWeekEntry,

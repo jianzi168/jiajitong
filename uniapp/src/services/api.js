@@ -105,6 +105,7 @@ export const getFamilyMembers = wrap('families.getMembers')
 
 // Phase 10 月末自动复盘
 export const getMonthlyReview = wrap('reviews.getMonthly')
+export const getMonthlyTrend = wrap('reviews.getTrend')
 
 // Phase 10 行动清单写库
 export const getActionStatus = wrap('actions.getStatus')
@@ -146,6 +147,7 @@ export default {
   getFamilyMembers,
   // Phase 10 月末自动复盘
   getMonthlyReview,
+  getMonthlyTrend,
   // Phase 10 行动清单写库
   getActionStatus,
   saveActionStatus,
