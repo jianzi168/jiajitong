@@ -19,10 +19,23 @@ const CATEGORIES = [
 const cats = ref(CATEGORIES.map((c) => ({ ...c, amount: '' })))
 const weekBadge = ref('')
 const submitting = ref(false)
-const role = ref('member')          // 默认 member (最严格权限), 由 onLoad 从 getFamilyMembers 校正
+const role = ref('member')          // 由 onLoad 从 getFamilyMembers 校正
 const loadingRole = ref(true)
+const members = ref(null)           // { owner, members: [] } —— 用于把 openid 显示成昵称
+const submitterOpenid = ref('')
 
 const isOwner = computed(() => role.value === 'owner')
+
+/** 本周填报人的昵称；查不到则退回落款「家人」 */
+const submitterLabel = computed(() => {
+  const openid = submitterOpenid.value
+  if (!openid) return ''
+  const m = members.value
+  if (!m) return '家人'
+  if (m.owner && m.owner.openid === openid) return m.owner.nickname || '管理员'
+  const hit = (m.members || []).find((x) => x.openid === openid)
+  return (hit && hit.nickname) || '家人'
+})
 
 const total = computed(() => {
   const sum = cats.value.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
@@ -49,6 +62,7 @@ onLoad(async () => {
     getFamilyMembers().catch(() => null),
   ]
   const [weeklyRes, membersRes] = await Promise.all(tasks)
+  members.value = membersRes || null
 
   // 2. 角色判定: owner.openid === 本地 openid → owner, 否则 member
   const myOpenid = getCurrentOpenid()
@@ -68,12 +82,12 @@ onLoad(async () => {
         ...c,
         amount: String(weeklyRes.entry.categories[c.id] ?? ''),
       }))
+      submitterOpenid.value = weeklyRes.entry.submitter_openid || ''
     }
   }
 })
 
 async function onCopyLast() {
-  if (!isOwner.value) return
   try {
     const res = await copyLastWeek()
     if (!res.categories) {
@@ -91,12 +105,6 @@ async function onCopyLast() {
 }
 
 async function onSubmit() {
-  // 前置权限: 即便绕过 UI, 后端 requireOwner 也会兜底拒绝, 这里给个友好提示
-  if (!isOwner.value) {
-    uni.showToast({ title: '只有家庭管理员可填写周记账', icon: 'none' })
-    return
-  }
-
   const categories = {}
   for (const c of cats.value) {
     categories[c.id] = Math.max(0, Math.round(Number(c.amount) || 0))
@@ -104,7 +112,11 @@ async function onSubmit() {
   submitting.value = true
   try {
     uni.showLoading({ title: '提交中...' })
-    await submitWeekly({ categories })
+    const res = await submitWeekly({ categories })
+    // 回填填报人，让「本周由谁填报」立即生效
+    if (res && res.entry && res.entry.submitter_openid) {
+      submitterOpenid.value = res.entry.submitter_openid
+    }
     const submitTotal = Object.values(categories).reduce((acc, v) => acc + v, 0)
     track('weekly_submit', { total: submitTotal })
     uni.hideLoading()
@@ -126,14 +138,17 @@ async function onSubmit() {
     <ScreenBody class="screen-body-scroll">
       <text class="week-badge">{{ weekBadge || '加载中...' }}</text>
 
-      <!-- 角色徽章 -->
-      <view class="role-badge" :class="{ readonly: !isOwner }">
+      <!-- 角色徽章：家庭成员均可填写，谁花钱谁记 -->
+      <view class="role-badge">
         <text v-if="loadingRole">⏳ 加载中…</text>
-        <text v-else-if="isOwner">👑 管理员（可填写）</text>
-        <text v-else>👀 只读模式 · 周记账由家庭管理员填写</text>
+        <text v-else-if="isOwner">👑 管理员 · 你和伴侣都可以填写</text>
+        <text v-else>✍️ 伴侣 · 你和家人都可以填写</text>
       </view>
 
-      <text v-if="isOwner" class="text-link copy-link" @tap="onCopyLast">复制上周数据</text>
+      <!-- 本周是谁填的：协同可见，避免两人重复填或都不知道填没填 -->
+      <text v-if="submitterLabel" class="submitter-hint">本周由 {{ submitterLabel }} 填报</text>
+
+      <text class="text-link copy-link" @tap="onCopyLast">复制上周数据</text>
 
       <view class="weekly-grid">
         <view
@@ -147,8 +162,8 @@ async function onSubmit() {
             type="number"
             :data-id="c.id"
             v-model="c.amount"
-            :disabled="!isOwner || submitting"
-            :placeholder="isOwner ? '' : '—'"
+            :disabled="submitting"
+            placeholder="0"
           />
         </view>
       </view>
@@ -158,12 +173,10 @@ async function onSubmit() {
       </view>
 
       <button
-        v-if="isOwner"
         class="grad-btn"
         :disabled="submitting"
         @tap="onSubmit"
       >提交</button>
-      <text v-else class="readonly-hint">如需补录本周支出，请联系家庭管理员</text>
     </ScreenBody>
   </view>
 </template>
@@ -183,15 +196,10 @@ async function onSubmit() {
   color: #22C55E;
   margin-bottom: 16rpx;
 }
-.role-badge.readonly {
-  background: rgba(168, 85, 247, 0.10);
-  color: #A855F7;
-}
-.readonly-hint {
+.submitter-hint {
   display: block;
-  text-align: center;
   font-size: 24rpx;
   color: var(--color-text-3);
-  margin-top: 16rpx;
+  margin-bottom: 12rpx;
 }
 </style>

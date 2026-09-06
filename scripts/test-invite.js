@@ -293,9 +293,16 @@ test('Phase 10 — 伴侣邀请', { concurrency: false }, async (t) => {
   })
 
   // ============================================================
-  // I-13: 成员不可写周记账
+  // I-13: 家庭成员均可写周记账
+  //
+  // 变更（2026-09-06）：原断言「成员不可写」已作废。周记账是家庭级数据，
+  // 本来就是家庭内共享的；只让 owner 记会导致「谁花钱谁记」做不到，
+  // 明显压低填报率。现放开到 owner + member，并用 submitter_openid 记录填报人。
+  //
+  // 仍然保留的安全边界：非本家庭成员依然写不到这个家庭的数据
+  // （weekly 系列一律按 user.family_id 读写）。
   // ============================================================
-  await t.test('I-13 成员不可写周记账', async () => {
+  await t.test('I-13 家庭成员均可写周记账', async () => {
     await h['user.bootstrap'](fakeCtx('userA'), { nickname: '晓雯' })
     const planOutput = {
       health_score: 78,
@@ -321,11 +328,24 @@ test('Phase 10 — 伴侣邀请', { concurrency: false }, async (t) => {
     await h['user.bootstrap'](fakeCtx('userB'), { nickname: '阿哲' })
     await h['families.inviteJoin'](fakeCtx('userB'), { invite_code: code })
 
-    // 伴侣尝试写
+    // 伴侣写入应成功，并记录填报人
     const categories = { food: 500, daily: 0, entertainment: 0, medical: 0, clothing: 0, transport: 0, other: 0 }
     const writeRes = await h['weekly.submit'](fakeCtx('userB'), { categories })
-    assert.notEqual(writeRes.code, 0, '成员不应有写权限')
-    assert.equal(writeRes.message, 'FORBIDDEN')
+    assert.equal(writeRes.code, 0, '家庭成员应可写周记账')
+    assert.equal(
+      writeRes.data.entry.submitter_openid, 'userB',
+      '应记录填报人，便于协同追溯'
+    )
+
+    // 安全边界：非本家庭成员写入的是自己的家庭，不污染该家庭数据
+    await h['user.bootstrap'](fakeCtx('userC'), { nickname: '路人' })
+    const outsider = await h['weekly.submit'](fakeCtx('userC'), { categories })
+    assert.equal(outsider.code, 0)
+    const mine = await h['weekly.getCurrent'](fakeCtx('userA'), {})
+    assert.equal(
+      mine.data.entry.submitter_openid, 'userB',
+      '外人写入不应改变本家庭的填报记录'
+    )
   })
 
   // ============================================================

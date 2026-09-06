@@ -48,6 +48,18 @@ function toDateString(dt = new Date()) {
 }
 
 /**
+ * ISO 星期几（周一 = 1 … 周日 = 7），业务时区。
+ *
+ * 不能用 `dt.getDay()`：那返回的是**运行环境**的星期，
+ * 服务器时区与业务时区(UTC+8)不一致时会在凌晨算错 —— 正是此前
+ * 「周起点存成周日」那一类问题。
+ */
+function isoDayOfWeek(dt = new Date()) {
+  const p = partsInBusinessTz(dt)
+  return p.day === 0 ? 7 : p.day
+}
+
+/**
  * ISO 周区间（周一 ~ 周日），业务时区
  *
  * 算法：先取业务时区当天 00:00 对应的绝对时刻作为锚点，再按整天数平移。
@@ -129,6 +141,7 @@ module.exports = {
   BUSINESS_TZ_OFFSET_MIN,
   partsInBusinessTz,
   toDateString,
+  isoDayOfWeek,
   weekRange,
   monthRange,
   monthFilter,

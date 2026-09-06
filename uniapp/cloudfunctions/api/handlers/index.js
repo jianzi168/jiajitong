@@ -742,6 +742,32 @@ async function plansActivate(ctx, payload) {
 }
 
 // ---------- dashboard.get (Phase 7) ----------
+/**
+ * 构造本周填报状态，供看板做「还没记账」的应用内提醒。
+ *
+ * 返回 { week_start, week_end, filled, submitter_openid, days_left, weekday }
+ * days_left：本周还剩几天（0 = 今天是周日），用于文案「本周还剩 X 天」。
+ */
+async function buildCurrentWeekStatus(familyId) {
+  const { weekStart, weekEnd } = isoWeekRange()
+  let entry = null
+  if (usingCloudDb) {
+    entry = await db.getWeeklyEntry(familyId, weekStart)
+  } else {
+    entry = findWeeklyEntryLocal(familyId, weekStart)
+  }
+  // 周一=1 … 周日=7；days_left 表示距本周结束还剩几天（周日为 0）
+  const weekday = dateUtil.isoDayOfWeek(new Date())
+  return {
+    week_start: weekStart,
+    week_end: weekEnd,
+    filled: !!entry,
+    submitter_openid: (entry && entry.submitter_openid) || '',
+    days_left: 7 - weekday,
+    weekday,
+  }
+}
+
 async function dashboardGet(ctx, payload) {
   const authErr = requireAuth(ctx); if (authErr) return authErr
   const openid = ctx.openid
@@ -807,11 +833,15 @@ async function dashboardGet(ctx, payload) {
   const totalPctRaw = totalSuggested > 0 ? Math.round((totalUsed / totalSuggested) * 100) : 0
   const totalPct = Math.min(100, totalPctRaw)
 
+  // 本周填报状态：用于看板顶部的应用内提醒。
+  // 依赖订阅消息模板的推送需要后台配置，这条路径零配置即可生效，
+  // 是「提醒用户记账」的最低门槛手段。
   return ok({
     activated: true,
     plan: ensureRecommendations(plan),
     categories,
     totals: { used: totalUsed, suggested: totalSuggested, pct: totalPct, color: colorOf(totalPctRaw) },
+    current_week: await buildCurrentWeekStatus(user.family_id),
     // 本月实际储蓄 = 收入 − 固定支出 − 本月已填报支出
     // 未启用追踪时无填报数据，actual 返回 null，前端应提示「启用追踪后可见」，
     // 不能退化为 0——那会把全部可支配收入谎报成已储蓄。
@@ -873,9 +903,9 @@ async function weeklySubmit(ctx, payload) {
     user = memoryStore.users.get(openid)
     if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
   }
-  // 安全: 仅 owner 可修改周记账数据
-  const ownerErr = requireOwner(user); if (ownerErr) return ownerErr
-
+  // 家庭成员（owner + member）均可填报：周记账是家庭级数据，本来就是共享的。
+  // 现实里谁花钱谁记，只让 owner 记会明显压低填报率。
+  // 通过 submitter_openid 记录填报人，便于追溯与展示。
   const { weekStart, weekEnd } = isoWeekRange()
 
   // 校验 7 类
@@ -886,7 +916,7 @@ async function weeklySubmit(ctx, payload) {
 
   let entry
   if (usingCloudDb) {
-    entry = await db.saveWeeklyEntry(user.family_id, weekStart, weekEnd, cats)
+    entry = await db.saveWeeklyEntry(user.family_id, weekStart, weekEnd, cats, openid)
   } else {
     // 本地: upsert
     const existing = findWeeklyEntryLocal(user.family_id, weekStart)
@@ -895,6 +925,7 @@ async function weeklySubmit(ctx, payload) {
     if (existing) {
       existing.categories = cats
       existing.total = total
+      existing.submitter_openid = openid
       existing.updated_at = nowTs
       entry = existing
     } else {
@@ -906,6 +937,7 @@ async function weeklySubmit(ctx, payload) {
         week_end: weekEnd,
         categories: cats,
         total,
+        submitter_openid: openid,
         created_at: nowTs,
         updated_at: nowTs,
       }
@@ -932,9 +964,8 @@ async function weeklyCopyLastWeek(ctx, payload) {
     if (!user) return fail(ERROR_CODE.UNAUTHORIZED, 'UNAUTHORIZED', '请先 user.bootstrap')
     last = findLastWeekEntryLocal(user.family_id, weekStart)
   }
-  // 安全: 仅 owner 可读上周数据 (含金额)
-  const ownerErr = requireOwner(user); if (ownerErr) return ownerErr
-
+  // 家庭成员均可用：member 在 dashboard / 复盘页本就能看到金额，
+  // 此前这里单独限制 owner 属于前后不一致（限制形同虚设）
   return ok({ categories: last ? last.categories : null })
 }
 

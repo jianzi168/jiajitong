@@ -64,6 +64,28 @@ const categories = computed(() => dashboard.value.categories || [])
 const totals = computed(() => dashboard.value.totals || null)
 const babyReserve = computed(() => dashboard.value.baby_reserve || null)
 
+/**
+ * 本周填报提醒（应用内）。
+ *
+ * 订阅消息推送依赖后台配置模板 ID，未配置时完全没有提醒；
+ * 这条路径零配置即可生效，是「提醒用户记账」的最低门槛手段。
+ */
+const weekStatus = computed(() => dashboard.value.current_week || null)
+const showWeeklyNudge = computed(
+  () => !!(activated.value && weekStatus.value && !weekStatus.value.filled)
+)
+
+const weekdayNames = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
+
+const nudgeText = computed(() => {
+  const w = weekStatus.value
+  if (!w) return ''
+  const wd = weekdayNames[w.weekday] || ''
+  // days_left = 0 表示今天就是周日，本周要结束了
+  if (w.days_left <= 0) return `今天是${wd}，本周还没记账，赶在周末前补上`
+  return `今天是${wd}，本周还没记账，还剩 ${w.days_left} 天`
+})
+
 // Phase 10 商业化关闭：7 类全量展示（原 free 只看前 2 类 + 锁定占位）
 const visibleCategories = categories
 
@@ -163,6 +185,15 @@ function onReview() {
 
       <!-- 实态 -->
       <view v-else>
+        <!-- 本周未填报提醒：点击直达填报页 -->
+        <view v-if="showWeeklyNudge" class="week-nudge" @tap="onWeekly">
+          <view class="week-nudge-body">
+            <text class="week-nudge-title">本周还没记账</text>
+            <text class="week-nudge-sub">{{ nudgeText }}</text>
+          </view>
+          <text class="week-nudge-cta">去填报 ›</text>
+        </view>
+
         <view class="bento-grid bento-grid-gap">
           <view class="bento-cell bento-cell-wide glass-card">
             <text class="glass-label">可支配预算</text>
@@ -310,6 +341,28 @@ function onReview() {
   box-shadow: none;
 }
 .family-avatar-add-text { color: var(--color-text-3); font-size: 30rpx; line-height: 1; }
+
+/* 本周未填报提醒：可点击直达填报页 */
+.week-nudge {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 24rpx 28rpx;
+  margin-bottom: 20rpx;
+  border-radius: 24rpx;
+  background: linear-gradient(135deg, rgba(255, 138, 92, 0.14), rgba(255, 107, 138, 0.10));
+  border: 1rpx solid rgba(255, 138, 92, 0.22);
+}
+.week-nudge-body { flex: 1; display: flex; flex-direction: column; gap: 6rpx; }
+.week-nudge-title { font-size: 28rpx; font-weight: 600; color: var(--color-text); }
+.week-nudge-sub { font-size: 24rpx; color: var(--color-text-2); line-height: 1.5; }
+.week-nudge-cta {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--color-coral);
+  flex-shrink: 0;
+}
+
 .bento-grid-gap { margin-top: 8rpx; }
 .bottom-link {
   display: flex;

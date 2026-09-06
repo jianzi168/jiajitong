@@ -768,7 +768,12 @@ async function getWeeklyEntry(familyId, weekStart) {
   return (res.data && res.data[0]) || null
 }
 
-async function saveWeeklyEntry(familyId, weekStart, weekEnd, categories) {
+/**
+ * 写入/更新周记账。
+ *
+ * @param {string} [submitterOpenid] - 填报人（家庭成员均可填报，记录便于追溯）
+ */
+async function saveWeeklyEntry(familyId, weekStart, weekEnd, categories, submitterOpenid = '') {
   const db = getDB()
   const total = Object.values(categories || {}).reduce((s, v) => s + (Number(v) || 0), 0)
   const now_ = Date.now()
@@ -776,9 +781,9 @@ async function saveWeeklyEntry(familyId, weekStart, weekEnd, categories) {
   const existing = await getWeeklyEntry(familyId, weekStart)
   if (existing) {
     await db.collection('weekly_entries').doc(existing._id).update({
-      data: { categories, total, updated_at: now_ }
+      data: { categories, total, submitter_openid: submitterOpenid, updated_at: now_ }
     })
-    return { ...existing, categories, total, updated_at: now_ }
+    return { ...existing, categories, total, submitter_openid: submitterOpenid, updated_at: now_ }
   }
   const res = await db.collection('weekly_entries').add({
     data: {
@@ -787,6 +792,7 @@ async function saveWeeklyEntry(familyId, weekStart, weekEnd, categories) {
       week_end: weekEnd,
       categories,
       total,
+      submitter_openid: submitterOpenid,
       created_at: now_,
       updated_at: now_
     }
