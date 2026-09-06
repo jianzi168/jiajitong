@@ -28,6 +28,38 @@ const hasSavingsData = computed(
   () => !!savings.value && savings.value.actual !== null
 )
 
+/**
+ * 备育储备的一行状态文案：里程碑 + 达标预警。
+ *
+ * 里程碑来自后端 shapeBabyReserve（25/50/75/100 节点）；
+ * on_track 由「实际储蓄速度」外推，而非 monthlyRequired ——
+ * 那是按计划刚好达标的值，用它外推永远显示达标。
+ */
+const milestoneLine = computed(() => {
+  const b = baby.value
+  if (!b) return ''
+  const parts = []
+
+  if (b.next_milestone === null) {
+    parts.push('目标已达成 🎉')
+  } else {
+    parts.push(`距下一节点还差 ${b.next_milestone - (b.pct || 0)}%`)
+  }
+
+  if (b.on_track === false) {
+    const extra = b.extra_monthly
+    parts.push(
+      extra
+        ? `按当前速度到生育时还差 ¥${b.gap}，每月需多存 ¥${extra}`
+        : `已到生育时点，还差 ¥${b.gap}`
+    )
+  } else if (b.on_track === true) {
+    parts.push('按当前速度可达标 ✓')
+  }
+
+  return parts.join(' · ')
+})
+
 onShow(async () => {
   try {
     // 用 loadDashboard 而非 loadActive：首页储蓄进度依赖本月已填报支出合计
@@ -102,7 +134,7 @@ function onGoActions() {
             ¥{{ baby.current || 0 }} / ¥{{ baby.target || 0 }}
           </text>
           <ProgressBar :pct="baby.pct || 0" :color="baby.color || 'green'" />
-          <text class="cell-meta">{{ baby.pct || 0 }}%</text>
+          <text class="cell-meta">{{ milestoneLine }}</text>
         </view>
       </view>
 

@@ -572,10 +572,70 @@ function progressColorOf(pct) {
 // 把 plan.baby_reserve 原始 shape 转成前端可直读 shape
 // 原始: { target, current, monthlyRequired, monthsRemaining, monthlyIncrement, oneTimeChildbirth, pressureRatio }
 // 附加: pct, color
-function shapeBabyReserve(br) {
+/**
+ * 把 plan.baby_reserve 原始 shape 转成前端可直读 shape。
+ *
+ * 原始: { target, current, monthlyRequired, monthsRemaining,
+ *         monthlyIncrement, oneTimeChildbirth, pressureRatio }
+ *
+ * 附加:
+ *   pct / color    进度与配色。
+ *                  ⚠️ 必须用 progressColorOf —— 这是「目标完成度，越高越好」；
+ *                  此前误用 colorOf（已花占比语义）导致**存到 95% 反而显示红色、
+ *                  严重落后反而显示绿色**，方向完全反了。
+ *   milestones     25 / 50 / 75 / 100 节点达成情况
+ *   next_milestone 下一个未达成节点（null = 全部达成）
+ *   monthly_saving_pace / projected / on_track / gap / extra_monthly
+ *                  按用户**实际储蓄速度**外推。
+ *                  ⚠️ 不能用 monthlyRequired 外推 —— 那是「按计划刚好达标」的值，
+ *                  用它外推永远显示达标，属于自我循环。
+ *
+ * @param {object} br - plan.baby_reserve
+ * @param {object} [opts]
+ * @param {number|null} [opts.monthlySavingPace] - 用户实际月储蓄速度（来自本月填报）。
+ *   本月无填报数据时传 null → 外推字段为 null（宁可不显示，也不拿不完整数据编造）
+ */
+function shapeBabyReserve(br, opts = {}) {
   if (!br || !br.target || br.target <= 0) return null
   const pct = Math.min(100, Math.round((br.current / br.target) * 100))
-  return { ...br, pct, color: colorOf(pct) }
+
+  const milestones = [25, 50, 75, 100].map((p) => ({ pct: p, reached: pct >= p }))
+  const next = milestones.find((m) => !m.reached)
+
+  const monthsRemaining = Number(br.monthsRemaining) || 0
+  const paceRaw = Number(opts.monthlySavingPace)
+  const hasPace = opts.monthlySavingPace != null && Number.isFinite(paceRaw) && paceRaw >= 0
+
+  let projected = null
+  let on_track = null
+  let gap = null
+  let extra_monthly = null
+
+  if (hasPace && monthsRemaining > 0) {
+    projected = Math.round(br.current + paceRaw * monthsRemaining)
+    gap = Math.max(0, Math.round(br.target - projected))
+    on_track = gap <= 0
+    extra_monthly = gap > 0 ? Math.ceil(gap / monthsRemaining) : 0
+  } else if (hasPace) {
+    // 已到生育时点：没有剩余月份可补，只报现状与缺口
+    projected = br.current
+    gap = Math.max(0, Math.round(br.target - br.current))
+    on_track = gap <= 0
+    extra_monthly = null
+  }
+
+  return {
+    ...br,
+    pct,
+    color: progressColorOf(pct),
+    milestones,
+    next_milestone: next ? next.pct : null,
+    monthly_saving_pace: hasPace ? Math.round(paceRaw) : null,
+    projected,
+    on_track,
+    gap,
+    extra_monthly,
+  }
 }
 
 /**
@@ -916,6 +976,7 @@ async function dashboardGet(ctx, payload) {
   }
 
   const activated = !!plan.activated_at
+  // 未启用追踪：无填报数据，只给里程碑与进度，不给外推
   const babyComputed = shapeBabyReserve(plan.baby_reserve)
   // 注意: plan 必须返回完整对象（含 recommendations/categories 等）。
   // 前端 planStore.loadDashboard 会用 res.plan 覆盖 activePlan,
@@ -961,6 +1022,18 @@ async function dashboardGet(ctx, payload) {
   const totalPctRaw = totalSuggested > 0 ? Math.round((totalUsed / totalSuggested) * 100) : 0
   const totalPct = Math.min(100, totalPctRaw)
 
+  // 本月实际储蓄 = 收入 − 固定支出 − 本月已填报支出
+  // 未启用追踪时无填报数据，actual 返回 null，前端应提示「启用追踪后可见」，
+  // 不能退化为 0——那会把全部可支配收入谎报成已储蓄。
+  const savingsData = computeSavings(plan, totalUsed)
+
+  // 备育外推速度：本月**有填报数据**才可外推。
+  // 若本月没填，按 0 支出外推会把储蓄速度虚高，宁可不显示。
+  const msForPace = plan.monthly_summary || {}
+  const babyPace = monthEntries.length > 0
+    ? Math.max(0, (Number(msForPace.income) || 0) - (Number(msForPace.fixed_expense) || 0) - totalUsed)
+    : null
+
   // 本周填报状态：用于看板顶部的应用内提醒。
   // 依赖订阅消息模板的推送需要后台配置，这条路径零配置即可生效，
   // 是「提醒用户记账」的最低门槛手段。
@@ -970,11 +1043,8 @@ async function dashboardGet(ctx, payload) {
     categories,
     totals: { used: totalUsed, suggested: totalSuggested, pct: totalPct, color: colorOf(totalPctRaw) },
     current_week: await buildCurrentWeekStatus(user.family_id),
-    // 本月实际储蓄 = 收入 − 固定支出 − 本月已填报支出
-    // 未启用追踪时无填报数据，actual 返回 null，前端应提示「启用追踪后可见」，
-    // 不能退化为 0——那会把全部可支配收入谎报成已储蓄。
-    savings: computeSavings(plan, totalUsed),
-    baby_reserve: babyComputed,
+    savings: savingsData,
+    baby_reserve: shapeBabyReserve(plan.baby_reserve, { monthlySavingPace: babyPace }),
   })
 }
 
