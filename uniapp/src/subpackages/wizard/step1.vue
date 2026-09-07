@@ -1,10 +1,18 @@
 <script setup>
 import ScreenBody from '@/components/ScreenBody.vue'
 import { ref, computed } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import NavBar from '@/components/NavBar.vue'
 import { useWizardStore } from '@/stores/wizard'
+import { track } from '@/utils/analytics'
 
 const wizard = useWizardStore()
+
+// 漏斗事件（PDD 附录 B）：进入向导 Step1。
+// from_quick：step1 时 wizard 里已有城市只可能来自快测带入（向导的城市在 step2 才选）
+onShow(() => {
+  track('calc_wizard_start', { from_quick: !!wizard.city })
+})
 
 const stages = [
   { id: 'newlywed', icon: '💑', title: '新婚磨合期', desc: '暂时没打算要娃，专注二人世界' },

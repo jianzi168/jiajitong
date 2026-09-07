@@ -42,6 +42,29 @@ const total = computed(() => {
   return sum.toLocaleString('zh-CN')
 })
 
+// ---------- 本周 vs 上周环比（PDD §8.1「周度小结」的应用内部分） ----------
+// 数据源复用 copyLastWeek 只读接口（与「复制上周」同一数据源，不新增 action）
+const lastWeekTotal = ref(null) // null = 上周无数据
+
+const weekDelta = computed(() => {
+  const cur = cats.value.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+  const prev = lastWeekTotal.value
+  if (prev === null || prev === undefined || !Number.isFinite(prev)) return null
+  if (prev === 0) return cur > 0 ? { dir: 'up', pct: null, prev } : null
+  const pct = Math.round(((cur - prev) / prev) * 100)
+  if (pct === 0) return { dir: 'flat', pct: 0, prev }
+  return { dir: pct > 0 ? 'up' : 'down', pct: Math.abs(pct), prev }
+})
+
+const weekDeltaText = computed(() => {
+  const d = weekDelta.value
+  if (!d) return ''
+  const prevStr = `上周 ¥${Number(d.prev).toLocaleString('zh-CN')}`
+  if (d.dir === 'flat') return `${prevStr} · 与上周持平`
+  const arrow = d.dir === 'up' ? '↑' : '↓'
+  return d.pct === null ? `${prevStr} · 本周开始有支出` : `${prevStr} · 本周${arrow}${d.pct}%`
+})
+
 function getCurrentOpenid() {
   // 优先级: session 写入的 openid (applyProfile)
   try {
@@ -53,16 +76,24 @@ function getCurrentOpenid() {
 
 onLoad(async () => {
   trackPage('weekly')
-  // 1. 先并行拉数据: 本周 entry + 家庭成员(用于判定角色)
+  // 1. 先并行拉数据: 本周 entry + 家庭成员(用于判定角色) + 上周(环比对比)
   const tasks = [
     getCurrentWeekly().catch((e) => {
       uni.showToast({ title: e.userHint || e.message || '加载失败', icon: 'none' })
       return null
     }),
     getFamilyMembers().catch(() => null),
+    copyLastWeek().catch(() => null),
   ]
-  const [weeklyRes, membersRes] = await Promise.all(tasks)
+  const [weeklyRes, membersRes, lastRes] = await Promise.all(tasks)
   members.value = membersRes || null
+
+  // 上周合计（环比基线）；无上周数据时保持 null，环比行不显示
+  if (lastRes && lastRes.categories) {
+    lastWeekTotal.value = Object.values(lastRes.categories).reduce(
+      (acc, v) => acc + (Number(v) || 0), 0
+    )
+  }
 
   // 2. 角色判定: owner.openid === 本地 openid → owner, 否则 member
   const myOpenid = getCurrentOpenid()
@@ -104,6 +135,48 @@ async function onCopyLast() {
   }
 }
 
+/**
+ * 提交成功后引导开启每周填报提醒（一次性）。
+ *
+ * 背景：setup-reminder 页面此前没有任何跳转入口（孤岛页面），用户无法
+ * 到达授权页 → subscribe_records 恒为空 → 周提醒/超支预警推送发不出去。
+ * 填报完成是最自然的授权时机（刚体验完价值，且推送内容与之直接相关）。
+ *
+ * 只在首次提交成功时弹一次确认框（storage 标记），拒绝后不再打扰——
+ * 订阅消息模板未配置时 setup-reminder 页自身会显示「暂未开放」，无副作用。
+ *
+ * @param {Function} next - 引导流程结束后的去向（通常是回看板）。
+ *   用户选择「去开启」时不调用 next：setup-reminder 授权成功后会自行
+ *   reLaunch 到 dashboard；取消/关闭时调用 next 继续原跳转。
+ */
+function maybePromptRemind(next) {
+  const goDashboard = () => next && next()
+  try {
+    if (uni.getStorageSync('remind_prompted')) {
+      goDashboard()
+      return
+    }
+  } catch (e) {
+    goDashboard()
+    return
+  }
+  uni.showModal({
+    title: '开启每周提醒？',
+    content: '每周日晚提醒你花 30 秒记录本周家庭支出',
+    confirmText: '去开启',
+    cancelText: '暂不用',
+    success: (r) => {
+      try { uni.setStorageSync('remind_prompted', true) } catch (e) {}
+      if (r.confirm) {
+        uni.navigateTo({ url: '/pages/setup-reminder/index' })
+      } else {
+        goDashboard()
+      }
+    },
+    fail: goDashboard,
+  })
+}
+
 async function onSubmit() {
   const categories = {}
   for (const c of cats.value) {
@@ -121,7 +194,10 @@ async function onSubmit() {
     track('weekly_submit', { total: submitTotal })
     uni.hideLoading()
     uni.showToast({ title: '已保存', icon: 'success' })
-    setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 500)
+    // 先弹订阅引导，引导关闭后再回看板（避免 reLaunch 把 modal/引导页冲掉）
+    maybePromptRemind(() => {
+      setTimeout(() => uni.reLaunch({ url: '/pages/dashboard/index' }), 500)
+    })
   } catch (e) {
     uni.hideLoading()
     uni.showToast({ title: e.userHint || e.message || '提交失败', icon: 'none' })
@@ -171,6 +247,7 @@ async function onSubmit() {
       <view class="week-total">
         本周合计 <text class="wt-val">¥{{ total }}</text>
       </view>
+      <text v-if="weekDeltaText" class="week-delta">{{ weekDeltaText }}</text>
 
       <button
         class="grad-btn"
@@ -201,5 +278,12 @@ async function onSubmit() {
   font-size: 24rpx;
   color: var(--color-text-3);
   margin-bottom: 12rpx;
+}
+/* 本周 vs 上周环比：涨红跌绿不符合支出语义——支出涨=注意（橙红），降=好（绿） */
+.week-delta {
+  display: block;
+  font-size: 24rpx;
+  color: var(--color-text-3);
+  margin-top: 8rpx;
 }
 </style>

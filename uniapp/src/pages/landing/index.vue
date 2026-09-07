@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { hasLocalSession, restoreSession, clearLocalSession } from '@/services/session'
 import { toBase64 } from '@/utils/base64.js'
+import { track } from '@/utils/analytics'
 
 const restoring = ref(false)
 
@@ -22,6 +23,8 @@ onShow(async () => {
 })
 
 function onQuickStart() {
+  // 漏斗事件（PDD 附录 B）：访问落地页 → 开始测算
+  track('calc_quick_start', { source: 'landing' })
   uni.navigateTo({ url: '/pages/quick/step1' })
 }
 

@@ -215,6 +215,9 @@ function onWizard() {
 function onWeekly() {
   uni.navigateTo({ url: '/pages/weekly/index' })
 }
+function onRemindSetup() {
+  uni.navigateTo({ url: '/pages/setup-reminder/index' })
+}
 function onActions() {
   uni.navigateTo({ url: '/pages/actions/index' })
 }
@@ -287,6 +290,8 @@ function onReview() {
           </view>
           <text class="week-nudge-cta">去填报 ›</text>
         </view>
+        <!-- 订阅提醒入口：setup-reminder 此前是孤岛页面，补一条常驻轻入口 -->
+        <text v-if="showWeeklyNudge" class="remind-link" @tap.stop="onRemindSetup">开启每周日提醒，不怕忘 ›</text>
 
         <view class="bento-grid bento-grid-gap">
           <view class="bento-cell bento-cell-wide glass-card">
@@ -497,6 +502,13 @@ function onReview() {
   font-weight: 600;
   color: var(--color-coral);
   flex-shrink: 0;
+}
+/* 订阅提醒轻入口：跟在未填报横幅下方 */
+.remind-link {
+  display: block;
+  font-size: 24rpx;
+  color: var(--color-text-3);
+  margin: 12rpx 4rpx 0;
 }
 
 /* 微调入口行：标题 + 右侧链接 */

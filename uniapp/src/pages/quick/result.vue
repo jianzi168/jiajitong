@@ -5,6 +5,7 @@ import ScoreRing from '@/components/ScoreRing.vue'
 import NavBar from '@/components/NavBar.vue'
 import { calcQuick } from '@/services/api'
 import { useWizardStore } from '@/stores/wizard'
+import { track } from '@/utils/analytics'
 
 const wizard = useWizardStore()
 
@@ -53,6 +54,8 @@ onMounted(async () => {
     rangeMax.value = r.disposable_range[1]
     tip.value = r.top_recommendation
     cityEstimated.value = r.city_estimated
+    // 漏斗事件（PDD 附录 B）：快测完成（城市 + 健康分，禁止含收入金额）
+    track('calc_quick_done', { city: city.value, health_score: r.health_score })
   } catch (e) {
     if (e.code === 40001) {
       // IMBALANCE

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useWizardStore } from '@/stores/wizard'
 import { applyProfile } from '@/services/session'
 import { calcFull, savePlan, bootstrap } from '@/services/api'
+import { track } from '@/utils/analytics'
 
 const wizard = useWizardStore()
 
@@ -47,6 +48,13 @@ async function start() {
     // 3. 持久化到 globalData 给 preview 读
     const dataForPreview = activePlan || { ...planOutput, is_active: true }
     getApp().globalData.fullPlanResult = dataForPreview
+
+    // 漏斗事件（PDD 附录 B）：完整测算完成、报告即将展示。
+    // 打在 loading 成功点而非 preview onMounted —— 后者被历史入口重复进入会污染漏斗。
+    track('calc_wizard_done', {
+      stage: wizard.stage,
+      health_score: planOutput.health_score,
+    })
 
     setTimeout(() => {
       uni.redirectTo({ url: '/subpackages/report/preview' })

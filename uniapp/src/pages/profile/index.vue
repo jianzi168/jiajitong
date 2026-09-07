@@ -17,6 +17,9 @@ const menus = [
   // 原指向报告完整页，但那个页面只显示当前方案，与菜单名不符。
   // 改指向版本列表，点进去才是真正的历史版本。
   { label: '历史规划书', url: '/pages/plan/history' },
+  // 订阅消息授权入口：setup-reminder 此前是孤岛页面（无任何跳转入口），
+  // 用户永远无法到达 → subscribe_records 恒为空 → 所有推送发不出去。
+  { label: '提醒设置', url: '/pages/setup-reminder/index' },
   { label: '数据导出与隐私', url: '/pages/privacy/index' },
   { label: '帮助与反馈', url: '/pages/help/index' }
 ]

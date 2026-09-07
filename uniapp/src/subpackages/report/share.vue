@@ -5,6 +5,7 @@ import { usePlanStore } from '@/stores/plan'
 import { getShareQrCode } from '@/services/api'
 import { buildShareModel, drawSharePoster } from '@/utils/poster'
 import { resolveQrImage } from '@/utils/shareQr'
+import { track } from '@/utils/analytics'
 
 const planStore = usePlanStore()
 
@@ -162,6 +163,8 @@ function doSave(tempFilePath) {
     success: () => {
       uni.hideLoading()
       saving.value = false
+      // 漏斗事件（PDD 附录 B）：分享长图已保存
+      track('share_poster', {})
       uni.showToast({ title: '已保存到相册', icon: 'success' })
     },
     fail: (e) => {

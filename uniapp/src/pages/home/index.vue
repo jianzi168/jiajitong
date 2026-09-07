@@ -40,6 +40,12 @@ const milestoneLine = computed(() => {
   if (!b) return ''
   const parts = []
 
+  // 备育倒计时（PDD §8.1 触达矩阵「备育倒计时提醒」的应用内部分）
+  const monthsRemaining = Number(b.monthsRemaining) || 0
+  if (monthsRemaining > 0) {
+    parts.push(`距计划生育还有 ${monthsRemaining} 个月`)
+  }
+
   if (b.next_milestone === null) {
     parts.push('目标已达成 🎉')
   } else {

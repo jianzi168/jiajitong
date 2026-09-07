@@ -4,6 +4,7 @@ import { ref, computed, onMounted } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 import { listCities, getFamilyProfile, saveFamilyProfile } from '@/services/api'
 import { useWizardStore } from '@/stores/wizard'
+import { track } from '@/utils/analytics'
 
 const wizard = useWizardStore()
 
@@ -135,6 +136,12 @@ async function onSave() {
   }
 
   saving.value = true
+  // 记录保存前的阶段，用于检测「阶段变更 → 引导重新测算」。
+  // 阶段系数（医疗↑娱乐↓等）按 stage 差异化，改了阶段但旧 plan 不重算，
+  // 看板里的预算结构就还是旧阶段口径 —— 属于隐性数据不一致（PDD §8.2）。
+  // 注意 fromStage 必须在此捕获：保存成功后 original 会被 resetOriginal 覆盖
+  const fromStage = original.stage
+  const stageChanged = stage.value !== original.stage
   try {
     const r = await saveFamilyProfile({ name, stage: stage.value, city: city.value })
     if (r && r.profile) {
@@ -145,7 +152,23 @@ async function onSave() {
       resetOriginal()
       wizard.setCity(city.value)
     }
-    uni.showToast({ title: '已保存', icon: 'success' })
+    if (stageChanged) {
+      track('stage_changed', { from: fromStage, to: stage.value })
+      // 阶段变了 → 旧方案类目结构已过期，主动引导重新测算而非只 toast
+      uni.showModal({
+        title: '家庭阶段已更新',
+        content: '预算结构会随阶段变化（如备孕后医疗占比上升）。要按新阶段重新测算吗？',
+        confirmText: '重新测算',
+        cancelText: '暂不用',
+        success: (m) => {
+          if (m.confirm) {
+            uni.redirectTo({ url: '/subpackages/wizard/step1' })
+          }
+        },
+      })
+    } else {
+      uni.showToast({ title: '已保存', icon: 'success' })
+    }
   } catch (e) {
     // 关键：保存失败时绝不清除 isDirty，否则用户会以为已经存上了
     uni.showToast({

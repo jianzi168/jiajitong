@@ -6,6 +6,7 @@ import ScoreRing from '@/components/ScoreRing.vue'
 import { usePlanStore } from '@/stores/plan'
 import { buildShareModel, drawSharePoster } from '@/utils/poster'
 import { getPlanById } from '@/services/api'
+import { track } from '@/utils/analytics'
 
 const loading = ref(true)
 const errorMsg = ref('')
@@ -168,6 +169,8 @@ async function onActivate() {
       plan.value = { ...plan.value, activated_at: Date.now() }
       try { uni.setStorageSync('activePlanCache', plan.value) } catch (e) {}
     }
+    // 漏斗事件（PDD 附录 B）：启用预算追踪（北极星指标）
+    track('plan_activate', { plan_id: (plan.value && plan.value._id) || '' })
     uni.hideLoading()
     uni.showToast({ title: '已启用追踪', icon: 'success' })
     setTimeout(goDashboard, 600)
