@@ -7,7 +7,7 @@
   "transformPx": false,
   "vueVersion": "3",
   "mp-weixin": {
-    "appid": "wx507aa102dc9eed90",
+    "appid": "wxe30fce95c09f3ec8",
     "cloudfunctionRoot": "cloudfunctions/",
     "envId": {
       "dev": "cloud1-0g12dcf7941e979c",
